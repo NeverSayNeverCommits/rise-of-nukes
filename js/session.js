@@ -11,7 +11,7 @@ import { World, TICK_MS, defaultSettings } from './sim/sim.js';
 import { PLAYER_COLORS } from './sim/data.js';
 import { HostNet, ClientNet } from './net.js';
 
-export const VERSION = 1;
+export const VERSION = 2;
 const HASH_EVERY = 100; // ticks (5 seconds)
 export const MAX_PLAYERS = 8;
 

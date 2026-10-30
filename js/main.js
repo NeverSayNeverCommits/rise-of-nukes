@@ -2,7 +2,7 @@
 import { Session, MAX_PLAYERS } from './session.js';
 import { GameUI } from './game.js';
 import { PLAYER_COLORS } from './sim/data.js';
-import { sfx } from './sfx.js';
+import { sfx, say, audioSettings, setAudio } from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -144,13 +144,43 @@ $('btn-copy').addEventListener('click', async () => {
 for (const sel of $('settings').querySelectorAll('select')) {
   sel.addEventListener('change', () => {
     const k = sel.dataset.set;
-    const v = ['startAge', 'doomsday'].includes(k) ? +sel.value : sel.value;
+    const v = ['startAge', 'doomsday'].includes(k) ? +sel.value : k === 'silly' ? sel.value === 'true' : sel.value;
     session.setSettings({ [k]: v });
   });
 }
 $('lobby-chat').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && session) { session.sendChat(e.target.value); e.target.value = ''; }
 });
+
+// ---------- sound & display settings ----------
+function openSettings() {
+  const a = audioSettings();
+  $('set-vol').value = a.vol; $('set-music').value = a.music;
+  $('set-voice').checked = a.voice; $('set-muted').checked = a.muted;
+  $('set-night').checked = localStorage.getItem('ron-night') !== '0';
+  $('settings-panel').classList.remove('hidden');
+}
+$('btn-settings').addEventListener('click', () => { sfx.unlock(); openSettings(); });
+$('btn-sound').addEventListener('click', () => { sfx.unlock(); openSettings(); });
+$('btn-menu-settings').addEventListener('click', openSettings);
+$('btn-settings-close').addEventListener('click', () => $('settings-panel').classList.add('hidden'));
+$('set-vol').addEventListener('input', (e) => setAudio('vol', +e.target.value));
+$('set-vol').addEventListener('change', () => sfx.play('explode', { v: 0.6 }));
+$('set-music').addEventListener('input', (e) => setAudio('music', +e.target.value));
+$('set-voice').addEventListener('change', (e) => { setAudio('voice', e.target.checked); if (e.target.checked) say('Voices on. Hello, commander.', 'announcer'); });
+$('set-muted').addEventListener('change', (e) => setAudio('muted', e.target.checked));
+$('set-night').addEventListener('change', (e) => {
+  localStorage.setItem('ron-night', e.target.checked ? '1' : '0');
+  if (game) game.r.noNight = !e.target.checked;
+});
+$('btn-test-sound').addEventListener('click', () => { sfx.unlock(); sfx.play('moo', { v: 1 }); setTimeout(() => say('Moo. This is a test cow.', 1), 900); });
+
+// A random silly line under the title.
+const TAGLINES = ['Now with 40% more cows.', 'Mutually assured entertainment.', 'The cows are not friendly. Well, most of them.',
+  'Peace was never an option.', 'Featuring a Doomsday Clock that is definitely fine.', 'Not responsible for friendships lost.',
+  'Contains nuclear weapons and one (1) sad potato.', 'Unit voices may contain sarcasm.', 'Duck and cover. Mostly duck.',
+  'Diplomacy is just nuking with extra steps.', 'Warning: meteors are not covered by insurance.', 'Happy hour is a valid military strategy.'];
+$('tagline').textContent = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 
 // Warn before closing the tab mid-game (closing the host's tab ends the game for everyone).
 window.addEventListener('beforeunload', (e) => {

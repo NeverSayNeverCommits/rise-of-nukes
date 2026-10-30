@@ -25,6 +25,23 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 | **Conquest** | Bring a city to 0 HP with soldiers nearby to capture it. Lose all your cities and you're out. Last team standing wins. |
 | **Nukes** | Atomic Age → research **Manhattan Project** at a Library → build a **Missile Silo** → build a nuke → **Launch** and click a target anywhere. Everyone gets a warning and a countdown. Missile Defense gives a 50% chance to shoot down nukes aimed at your land. |
 | **Doomsday Clock** | Every nuke moves the clock. When it reaches the limit set in the lobby, everybody loses. |
+| **Veterans** | Units that get kills earn ranks (★ at 3 kills, ★★ at 7, ★★★ at 15). Each rank gives +15% attack and HP. |
+| **Day and night** | A full day lasts 6 minutes. At night, windows light up. You can turn this off in the settings. |
+
+### Silly stuff
+
+This is on by default. The host can switch it off in the lobby ("Silly stuff: Off").
+
+- **Cows** wander the map. Kill them for food. If a cow walks into nuclear fallout, it becomes a **mutant cow** that attacks everyone.
+- **Supply crates** appear. Touch one with any unit to open it. You might get resources, free soldiers, a free tech, more cows… or a single sad potato.
+- **Random events** happen every few minutes: a plague of frogs (farms work at half speed), a cow stampede, happy hour (everyone moves faster), a tax audit, an economic boom, a supply drop, or a **meteor** (you get a warning circle first, so move your stuff).
+- **Units talk back.** Every unit has a name. Click the same unit too many times and it will complain.
+- **Taunts.** Type a number from 1 to 25 in chat and everyone's browser says it out loud. Try 11, 14 and 22.
+- **Awards** at the end of the game, like *Most Likely to Start World War 3* and *Steak Enthusiast*.
+
+### Sound and display
+
+Click **⚙️ Sound & display** on the main menu, or 🔊 in the game, to change the volume, the music, the spoken voices, and the day/night cycle. The settings are saved in your browser. The music is made on the fly and gets more intense when fighting starts.
 
 ### Controls
 
@@ -87,11 +104,15 @@ Any static file server works. Opening `index.html` straight from disk won't work
 |---|---|
 | `js/sim/data.js` | **All the game numbers**: units, buildings, techs, costs, ages. Start here to change balance. |
 | `js/sim/sim.js` | The deterministic game simulation (units, combat, territory, nukes). |
+| `js/sim/extras.js` | Silly stuff: cows, mutant cows, crates, meteors and random events. Also deterministic. |
 | `js/sim/map.js` | Random map generator. |
 | `js/sim/path.js` | A* path finding. |
 | `js/session.js` | Lobby and lockstep game loop. |
 | `js/net.js` | PeerJS networking. |
-| `js/render.js` | Canvas drawing. |
+| `js/render.js` | Canvas drawing: terrain, units, particles, day and night. |
+| `js/sprites.js` | Draws the building pictures for each age (in code, no image files). |
+| `js/sfx.js` | Sound effects, music and spoken voices. All made in code with Web Audio, no sound files. |
+| `js/flavor.js` | Unit names, voice lines, taunts and end-of-game awards. |
 | `js/game.js` | Input, HUD and alerts. |
 | `js/main.js` | Menu and lobby screens. |
 
@@ -103,7 +124,7 @@ Any static file server works. Opening `index.html` straight from disk won't work
 - Aircraft (fighters and bombers), and ships
 - Shift-queued orders, formations
 - Wonders and more nations with bonuses
-- Sprite art and music
+- More silly events (suggestions welcome)
 
 ---
 

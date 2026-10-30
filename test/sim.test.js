@@ -136,4 +136,36 @@ assert.ok(target.hp <= 1, 'city ruined');
   assert.equal(w.s.over && w.s.over.winnerTeam, 0);
 }
 
+// 6. The silly stuff: cows, crates, meteors and random events must stay in sync too.
+{
+  const w = new World(setup()), w2 = new World(setup());
+  assert.ok(w.s.critters.length > 5, 'cows on the map');
+  assert.ok(w.s.crates.length > 0, 'crates on the map');
+  const seen = new Set();
+  for (let t = 0; t < 2400; t++) {
+    // Force a random event every 5 seconds.
+    if (t % 100 === 0) { w.s.nextSilly = w.s.tick + 1; w2.s.nextSilly = w2.s.tick + 1; }
+    // Everyone hunts the nearest cow and walks to the nearest crate.
+    const cmds = [];
+    if (t % 60 === 0) w.s.players.forEach((pl, p) => {
+      const army = w.s.units.filter((u) => u.owner === p && u.type !== 'citizen');
+      const cow = w.s.critters[p % Math.max(1, w.s.critters.length)];
+      if (cow && army.length) cmds.push({ p, c: 'attack', ids: army.map((u) => u.id), t: cow.id });
+      const cr = w.s.crates[p % Math.max(1, w.s.crates.length)];
+      const cit = w.s.units.find((u) => u.owner === p && u.type === 'citizen');
+      if (cr && cit) cmds.push({ p, c: 'move', ids: [cit.id], x: cr.x, y: cr.y });
+    });
+    cmds.push(...botCommands(w, w.s.tick));
+    w.step(cmds); w2.step(JSON.parse(JSON.stringify(cmds)));
+    for (const e of w.events.splice(0)) if (['silly', 'crate', 'critter', 'meteorHit'].includes(e.type)) seen.add(e.type === 'silly' ? e.kind : e.type);
+    if (t % 50 === 0) assert.equal(w.hash(), w2.hash(), `extras: desync at tick ${w.s.tick}`);
+  }
+  const cows = w.s.players.map((p) => p.st.cows).join(',');
+  console.log(`extras ok: events seen ${[...seen].join(' ')}; cows eaten ${cows}`);
+  assert.ok(seen.has('critter'), 'a cow was eaten');
+  assert.ok(seen.has('crate'), 'a crate was opened');
+  const r = new World(setup(), JSON.parse(JSON.stringify(w.serialize())));
+  assert.equal(r.hash(), w.hash(), 'extras save/load');
+}
+
 console.log('ALL TESTS PASSED');

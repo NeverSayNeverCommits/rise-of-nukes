@@ -7,13 +7,14 @@ import {
 import { genMap, T, DEP } from './map.js';
 import { PathFinder } from './path.js';
 import { nextRand } from './rng.js';
+import { initExtras, updateExtras, findMutant, COW, MUTANT } from './extras.js';
 
 export const TICK_MS = 50;
 export const DT = TICK_MS / 1000;
 const CELL = 2; // spatial bucket size in tiles
 
 export function defaultSettings() {
-  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on' };
+  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on', silly: true };
 }
 
 export class World {
@@ -41,6 +42,7 @@ export class World {
       players: this.setup.players.map((p, i) => ({
         name: p.name, color: p.color, team: p.team ?? i, age: Math.max(0, Math.min(4, st.startAge | 0)),
         res: { ...res }, techs: {}, pending: {}, alive: true, nukes: 0, kills: 0, lost: 0,
+        st: { gath: { food: 0, wood: 0, metal: 0, oil: 0 }, built: 0, cows: 0, crates: 0, caps: 0, razed: 0, promos: 0 },
       })),
       units: [], blds: [], missiles: [], fallout: [], doom: 0, over: null,
     };
@@ -55,6 +57,7 @@ export class World {
       const spot = this.freeSpotNear(sx + 2, sy, 1);
       this.addUnit('infantry', p, spot[0], spot[1]);
     });
+    initExtras(this);
     this.recalcTerritory();
   }
 
@@ -71,6 +74,7 @@ export class World {
     this.byId = new Map();
     for (const u of this.s.units) this.byId.set(u.id, u);
     for (const b of this.s.blds) this.byId.set(b.id, b);
+    for (const c of this.s.critters || []) this.byId.set(c.id, c);
     this.pass = new Uint8Array(W * H);
     for (let i = 0; i < W * H; i++) this.pass[i] = this.map.tiles[i] === T.GRASS ? 1 : 0;
     this.blockId = new Int32Array(W * H);
@@ -90,6 +94,13 @@ export class World {
   get(id) { return this.byId.get(id); }
   enemy(a, b) { return a !== b && a >= 0 && b >= 0 && this.s.players[a].team !== this.s.players[b].team; }
   ally(a, b) { return a === b || (a >= 0 && b >= 0 && this.s.players[a].team === this.s.players[b].team); }
+  // Can player p attack entity t? (critters can always be attacked)
+  hostile(p, t) { return t.kind === 'c' || this.enemy(p, t.owner); }
+  clsOf(t) { return t.kind === 'u' ? UNITS[t.type].cls : t.kind === 'c' ? 'inf' : 'bld'; }
+  radiusOf(e) { return e.kind === 'u' ? UNITS[e.type].radius : e.kind === 'c' ? (e.mutant ? MUTANT.radius : COW.radius) : 0; }
+  // Veteran units (rank 1-3) get +15% attack and health per rank.
+  rankMul(u) { return 1 + 0.15 * (u.rank || 0); }
+  uMax(u) { return this.stats(u.owner, u.type).hp * this.rankMul(u); }
   passable(x, y) { return x >= 0 && y >= 0 && x < this.W && y < this.H && this.pass[y * this.W + x] === 1; }
   terrAt(x, y) {
     const tx = Math.floor(x), ty = Math.floor(y);
@@ -118,7 +129,7 @@ export class World {
   }
 
   bldMaxHp(b) { return BLDS[b.type].hp; }
-  maxHp(e) { return e.kind === 'u' ? this.stats(e.owner, e.type).hp : this.bldMaxHp(e); }
+  maxHp(e) { return e.kind === 'u' ? this.uMax(e) : e.kind === 'c' ? (e.mutant ? MUTANT.hp : COW.hp) : this.bldMaxHp(e); }
 
   // Called when age or tech changes: keep each unit's health share the same.
   refreshStats(p) {
@@ -215,16 +226,16 @@ export class World {
 
   // Distance from a point to an entity's edge (units are circles, buildings are squares).
   edgeDist(x, y, e) {
-    if (e.kind === 'u') {
+    if (e.kind !== 'b') {
       const dx = e.x - x, dy = e.y - y;
-      return Math.sqrt(dx * dx + dy * dy) - UNITS[e.type].radius;
+      return Math.sqrt(dx * dx + dy * dy) - this.radiusOf(e);
     }
     const dx = Math.max(e.x - x, 0, x - (e.x + e.size));
     const dy = Math.max(e.y - y, 0, y - (e.y + e.size));
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  centre(e) { return e.kind === 'u' ? [e.x, e.y] : [e.x + e.size / 2, e.y + e.size / 2]; }
+  centre(e) { return e.kind !== 'b' ? [e.x, e.y] : [e.x + e.size / 2, e.y + e.size / 2]; }
 
   // ---------- placement rules (also used by the UI for the green/red ghost) ----------
 
@@ -493,10 +504,16 @@ export class World {
     this.rates = s.players.map(() => ({ food: 0, wood: 0, metal: 0, oil: 0 }));
 
     this.pathBudget = 24;
+    const m = s.mods || {};
+    this.spdMul = m.speed ? m.speed.mul : 1;
+    this.gathMul = { food: 1, wood: 1, metal: 1, oil: 1 };
+    if (m.gather) for (const k in this.gathMul) this.gathMul[k] *= m.gather.mul;
+    if (m.food) this.gathMul.food *= m.food.mul;
     this.buildBuckets();
     this.assignWorkers();
     for (const u of s.units) if (u.hp > 0) this.updateUnit(u);
     this.separate();
+    updateExtras(this);
     this.popNow = s.players.map((_, p) => 0);
     for (const u of s.units) if (u.hp > 0) this.popNow[u.owner]++;
     this.capNow = s.players.map((_, p) => this.popCap(p));
@@ -576,7 +593,7 @@ export class World {
 
   // Walk the current path. Returns true when the end is reached.
   walk(u, speed) {
-    let rem = speed * DT;
+    let rem = speed * this.spdMul * DT;
     // Stuck check: if we barely moved in the last second, skip the current waypoint.
     if (this.s.tick % 20 === u.id % 20) {
       const mx = u.x - (u.sx ?? u.x), my = u.y - (u.sy ?? u.y);
@@ -619,9 +636,9 @@ export class World {
     if (d <= range) { u.path = []; u.pi = 0; return true; }
     if (u.rep > 0) u.rep--;
     const done = u.pi >= u.path.length;
-    const moved = t.kind === 'u' && (Math.abs(u.gx - t.x) + Math.abs(u.gy - t.y) > 1.5);
+    const moved = t.kind !== 'b' && (Math.abs(u.gx - t.x) + Math.abs(u.gy - t.y) > 1.5);
     if (u.rep === 0 && (done || moved) && this.pathBudget > 0) {
-      if (t.kind === 'u') {
+      if (t.kind !== 'b') {
         const tx = Math.floor(t.x), ty = Math.floor(t.y);
         this.pathTo(u, [tx, ty, tx + 1, ty + 1], Math.max(0, range - 0.5), [t.x, t.y]);
         u.gx = t.x; u.gy = t.y;
@@ -635,7 +652,7 @@ export class World {
     else if (d < 3) {
       // Path used up but still not quite there (crowding): step straight at the target.
       let px, py;
-      if (t.kind === 'u') { px = t.x; py = t.y; }
+      if (t.kind !== 'b') { px = t.x; py = t.y; }
       else { px = Math.max(t.x, Math.min(t.x + t.size, u.x)); py = Math.max(t.y, Math.min(t.y + t.size, u.y)); }
       const dx = px - u.x, dy = py - u.y, dd = Math.sqrt(dx * dx + dy * dy);
       if (dd > 1e-6) {
@@ -653,24 +670,40 @@ export class World {
     const dx = tx - u.x, dy = ty - u.y, d = Math.sqrt(dx * dx + dy * dy);
     if (d > 1e-6) { u.fx = dx / d; u.fy = dy / d; }
     this.event({ type: 'shot', p: u.owner, cls: st.cls, age: this.s.players[u.owner].age, x: u.x, y: u.y, x2: tx, y2: ty, melee: st.range < 1 });
-    this.damage(t, st.atk * MULT[st.cls][t.kind === 'u' ? UNITS[t.type].cls : 'bld'], u.owner);
+    const atk = st.atk * this.rankMul(u);
+    this.damage(t, atk * MULT[st.cls][this.clsOf(t)], u.owner, u.id);
     if (st.splash > 0) {
       this.unitsNear(tx, ty, st.splash + 0.5, (o) => {
         if (o === t || o.hp <= 0 || !this.enemy(u.owner, o.owner)) return;
         const ex = o.x - tx, ey = o.y - ty;
-        if (ex * ex + ey * ey <= st.splash * st.splash) this.damage(o, st.atk * 0.5 * MULT[st.cls][UNITS[o.type].cls], u.owner);
+        if (ex * ex + ey * ey <= st.splash * st.splash) this.damage(o, atk * 0.5 * MULT[st.cls][UNITS[o.type].cls], u.owner, u.id);
       });
     }
   }
 
-  damage(t, amount, by) {
+  damage(t, amount, by, src = 0) {
     if (t.hp <= 0) return;
     t.hp -= amount;
     if (t.kind === 'b') t.lastAtk = by;
+    if (src) t.hitU = src;
+    if (t.kind === 'c') {
+      t.hitBy = by;
+      // Cows run away from whoever hit them. Mutant cows get angry instead.
+      const a = src ? this.get(src) : null;
+      if (a) {
+        if (t.mutant) t.tgt = a.id;
+        else {
+          const dx = t.x - a.x, dy = t.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+          t.fx = dx / d; t.fy = dy / d; t.flee = 30;
+        }
+      }
+      return;
+    }
     if (by >= 0 && t.owner !== by) {
       t.hitBy = by;
+      const [cx, cy] = this.centre(t);
       // Let the victim's owner know (UI throttles these).
-      this.event({ type: 'attacked', p: t.owner, x: t.kind === 'u' ? t.x : t.x + t.size / 2, y: t.kind === 'u' ? t.y : t.y + t.size / 2 });
+      this.event({ type: 'attacked', p: t.owner, x: cx, y: cy });
       // Idle units that are hit fight back.
       if (t.kind === 'u' && !t.ord && UNITS[t.type].cls !== 'cit') {
         const att = this.findEnemy(t.owner, t.x, t.y, 10, true);
@@ -692,7 +725,7 @@ export class World {
       u.scan--;
       if (u.scan <= 0) {
         u.scan = 8 + (u.id % 5);
-        const e = this.findEnemy(u.owner, u.x, u.y, st.sight);
+        const e = this.findEnemy(u.owner, u.x, u.y, st.sight) || findMutant(this, u.x, u.y, st.sight);
         if (e) {
           const resume = o && o.k === 'move' ? { ...o } : null;
           u.ord = { k: 'attack', t: e.id, auto: true, resume, hx: u.x, hy: u.y };
@@ -717,9 +750,9 @@ export class World {
     }
     if (o.k === 'attack') {
       const t = this.get(o.t);
-      const lost = !t || t.hp <= 0 || !this.enemy(u.owner, t.owner);
+      const lost = !t || t.hp <= 0 || !this.hostile(u.owner, t);
       // Auto targets: give up if they lead us too far away.
-      const tooFar = t && o.auto && !o.resume && o.hx != null && ((t.kind === 'u' ? (t.x - o.hx) * (t.x - o.hx) + (t.y - o.hy) * (t.y - o.hy) : 0) > (st.sight + 5) * (st.sight + 5));
+      const tooFar = t && o.auto && !o.resume && o.hx != null && ((t.kind !== 'b' ? (t.x - o.hx) * (t.x - o.hx) + (t.y - o.hy) * (t.y - o.hy) : 0) > (st.sight + 5) * (st.sight + 5));
       if (lost || tooFar) {
         const next = o.resume || null;
         this.setOrder(u, next);
@@ -744,8 +777,9 @@ export class World {
         if (b.prog >= d.time) this.finishBld(b);
       } else if (d.gather) {
         const pl = this.s.players[u.owner];
-        const amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather);
+        const amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather) * this.gathMul[d.gather];
         pl.res[d.gather] += amt * DT;
+        pl.st.gath[d.gather] += amt * DT;
         this.rates[u.owner][d.gather] += amt;
       } else if (b.hp < d.hp) {
         b.hp = Math.min(d.hp, b.hp + 15 * DT); // repair
@@ -758,7 +792,8 @@ export class World {
   finishBld(b) {
     const d = BLDS[b.type];
     b.done = true; b.prog = d.time;
-    this.event({ type: 'built', p: b.owner, id: b.id, btype: b.type });
+    this.s.players[b.owner].st.built++;
+    this.event({ type: 'built', p: b.owner, id: b.id, btype: b.type, x: b.x + b.size / 2, y: b.y + b.size / 2 });
     if (b.type === 'city') {
       b.name = 'City ' + (this.cityCount(b.owner));
       this.recalcTerritory();
@@ -844,13 +879,13 @@ export class World {
         b.scan--;
         if (b.scan <= 0) {
           b.scan = 6;
-          t = this.findEnemy(p, cx, cy, d.range + b.size / 2, true);
+          t = this.findEnemy(p, cx, cy, d.range + b.size / 2, true) || findMutant(this, cx, cy, d.range + b.size / 2);
         }
       }
       b.tgt = t ? t.id : 0;
       if (t && b.cd <= 0) {
         b.cd = d.cd;
-        const mul = MULT.bld[UNITS[t.type].cls] * (1 + 0.25 * pl.age);
+        const mul = MULT.bld[this.clsOf(t)] * (1 + 0.25 * pl.age);
         this.event({ type: 'shot', p, cls: 'bld', age: pl.age, x: cx, y: cy, x2: t.x, y2: t.y, melee: false });
         this.damage(t, d.atk * mul, p);
       }
@@ -923,7 +958,7 @@ export class World {
         if (o >= 0 && this.enemy(o, u.owner)) {
           const pl = s.players[u.owner];
           const mul = 1 - techSum(pl, 'attrition');
-          u.hp -= this.stats(u.owner, u.type).hp * ATTRITION * mul * 0.5;
+          u.hp -= this.uMax(u) * ATTRITION * mul * 0.5;
           u.attr = s.tick;
         }
       }
@@ -971,6 +1006,10 @@ export class World {
       if (d2 <= kr * kr) { u.hp = 0; u.hitBy = m.owner; }
       else if (d2 <= br * br) this.damage(u, this.stats(u.owner, u.type).hp * NUKE.blastDmg, m.owner);
     }
+    for (const c of s.critters) {
+      const dx = c.x - m.x, dy = c.y - m.y;
+      if (dx * dx + dy * dy <= kr * kr && !c.mutant) c.hp = 0;
+    }
     for (const b of s.blds) {
       if (b.hp <= 0) continue;
       const d = this.edgeDist(m.x, m.y, b);
@@ -1001,8 +1040,24 @@ export class World {
         if (u.hp > 0) { alive.push(u); continue; }
         this.byId.delete(u.id);
         s.players[u.owner].lost++;
-        if (u.hitBy != null && u.hitBy >= 0 && u.hitBy !== u.owner) s.players[u.hitBy].kills++;
-        this.event({ type: 'die', p: u.owner, x: u.x, y: u.y, utype: u.type, cls: UNITS[u.type].cls });
+        const by = u.hitBy != null && u.hitBy >= 0 && u.hitBy !== u.owner ? u.hitBy : -1;
+        if (by >= 0) {
+          s.players[by].kills++;
+          // The unit that landed the last hit may get promoted.
+          const k = u.hitU ? this.get(u.hitU) : null;
+          if (k && k.kind === 'u' && k.hp > 0 && k.owner === by) {
+            k.kills = (k.kills || 0) + 1;
+            const rank = k.kills >= 15 ? 3 : k.kills >= 7 ? 2 : k.kills >= 3 ? 1 : 0;
+            if (rank > (k.rank || 0)) {
+              const f = k.hp / this.uMax(k);
+              k.rank = rank;
+              k.hp = f * this.uMax(k);
+              s.players[by].st.promos++;
+              this.event({ type: 'promote', p: by, id: k.id, rank, x: k.x, y: k.y, utype: k.type });
+            }
+          }
+        }
+        this.event({ type: 'die', p: u.owner, by, x: u.x, y: u.y, utype: u.type, cls: UNITS[u.type].cls });
       }
       s.units = alive;
     }
@@ -1015,6 +1070,7 @@ export class World {
         if (b.type === 'city' && b.done) { b.hp = 1; keep.push(b); continue; }
         this.markBld(b, false);
         this.byId.delete(b.id);
+        if (b.lastAtk >= 0 && b.lastAtk !== b.owner && s.players[b.lastAtk]) s.players[b.lastAtk].st.razed++;
         this.event({ type: 'destroyed', p: b.owner, x: b.x + b.size / 2, y: b.y + b.size / 2, size: b.size, btype: b.type });
         if (b.type === 'city') terrChanged = true;
       }
@@ -1037,6 +1093,7 @@ export class World {
     });
     if (!near) return false;
     const was = b.owner;
+    this.s.players[by].st.caps++;
     b.owner = by; b.hp = BLDS.city.hp * 0.25; b.q = []; b.rally = null; b.tgt = 0; b.lastAtk = -1;
     // Anyone queued in the old owner's research is lost; clear pending flags they owned.
     this.event({ type: 'captured', p: by, from: was, id: b.id, x: cx, y: cy, name: b.name });
@@ -1091,6 +1148,8 @@ export class World {
     for (const u of s.units) { mix(u.id); mix(Math.round(u.x * 1000)); mix(Math.round(u.y * 1000)); mix(Math.round(u.hp * 100)); }
     for (const b of s.blds) { mix(b.id); mix(b.owner); mix(Math.round(b.hp * 100)); mix(b.q.length); }
     for (const p of s.players) for (const k of RES) mix(Math.round(p.res[k] * 100));
+    for (const c of s.critters) { mix(c.id); mix(Math.round(c.x * 1000)); mix(Math.round(c.y * 1000)); mix(Math.round(c.hp * 100)); }
+    mix(s.crates.length); mix(s.meteors.length);
     return h;
   }
 }

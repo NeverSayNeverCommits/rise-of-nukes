@@ -11,8 +11,9 @@
   <!-- Main menu -->
   <section id="menu" class="screen">
     <div class="panel menu-panel">
-      <h1>RISE OF NUKES</h1>
+      <h1><span class="atom">☢</span> RISE OF NUKES</h1>
       <p class="sub">A tiny Rise of Nations style strategy game. Gather, grow, conquer, and nuke your friends.</p>
+      <p id="tagline" class="tagline"></p>
       <label>Your name <input id="name" maxlength="16" placeholder="Commander" autocomplete="off"></label>
       <div class="row">
         <button id="btn-host" class="big">Host game</button>
@@ -23,6 +24,7 @@
         <button id="btn-join" class="big">Join game</button>
       </div>
       <p id="menu-status" class="status"></p>
+      <div class="row"><button id="btn-settings" class="secondary">⚙️ Sound &amp; display</button></div>
       <details class="help">
         <summary>How to play</summary>
         <ul>
@@ -32,6 +34,8 @@
           <li>Build more cities to grow your <b>territory</b>. You can only build inside your borders. Enemy territory slowly hurts your units.</li>
           <li>Destroy an enemy city with soldiers nearby to <b>capture it</b>. Lose all your cities and you are out.</li>
           <li>In the <b>Atomic Age</b>, research the Manhattan Project at a Library, build a Missile Silo, build a nuke, and launch it. Watch the <b>Doomsday Clock</b>: too many nukes and everyone loses.</li>
+          <li>Watch out for cows, supply crates, meteors, frogs and other surprises. Kill cows for food. Do not let cows walk into nuclear fallout.</li>
+          <li>Type a number (1-25) in chat to send a spoken taunt. Try 11, 14 and 22.</li>
           <li>Keys: arrow keys / screen edge / middle-drag to scroll, mouse wheel to zoom, <b>A</b> attack-move, <b>S</b> stop, <b>H</b> home, <b>.</b> next idle citizen, <b>Ctrl+1-9</b> make group, <b>1-9</b> select group, <b>Enter</b> chat, <b>Space</b> last alert.</li>
         </ul>
       </details>
@@ -63,6 +67,9 @@
         <label>Fog of war
           <select data-set="fog"><option value="on">On</option><option value="explored">Map revealed</option><option value="off">Off</option></select>
         </label>
+        <label>Silly stuff
+          <select data-set="silly"><option value="true">On: cows, crates, meteors…</option><option value="false">Off: serious war only</option></select>
+        </label>
       </div>
       <p class="hint">Players on the same team are allies. Give everyone a different team for free-for-all.</p>
       <div class="chat-lobby"><div id="lobby-log" class="log"></div><input id="lobby-chat" placeholder="Say something…" maxlength="200"></div>
@@ -84,13 +91,14 @@
         <span id="age-label"></span>
         <span id="doom" title="Doomsday Clock: when it hits the limit, everybody loses."></span>
         <span id="clock"></span>
+        <button id="btn-sound" class="small secondary" title="Sound and display settings">🔊</button>
         <button id="btn-menu" class="small" title="Menu">☰</button>
       </div>
     </div>
     <div id="alerts"></div>
     <div id="nuke-flash"></div>
     <div id="chat-log" class="log"></div>
-    <input id="chat-input" class="hidden" placeholder="Chat (Enter to send, Esc to cancel)" maxlength="200">
+    <input id="chat-input" class="hidden" placeholder="Chat (Enter to send, Esc to cancel). Type 1-25 for a taunt." maxlength="200">
     <div id="bottombar">
       <canvas id="minimap" width="200" height="200"></canvas>
       <div id="sel-info"></div>
@@ -101,7 +109,7 @@
       <div class="panel">
         <h2>Menu</h2>
         <div id="score-table"></div>
-        <div class="row"><button id="btn-resume" class="big">Back to game</button></div>
+        <div class="row"><button id="btn-resume" class="big">Back to game</button><button id="btn-menu-settings" class="big secondary">⚙️ Sound &amp; display</button></div>
         <div class="row"><button id="btn-resign" class="big danger">Resign</button><button id="btn-quit" class="big secondary">Quit to menu</button></div>
       </div>
     </div>
@@ -114,6 +122,19 @@
       </div>
     </div>
   </section>
+
+  <!-- Sound & display settings (used from the main menu and in game) -->
+  <div id="settings-panel" class="overlay hidden">
+    <div class="panel settings-panel">
+      <h2>⚙️ Sound &amp; display</h2>
+      <label>Volume <input type="range" id="set-vol" min="0" max="1" step="0.05"></label>
+      <label>Music <input type="range" id="set-music" min="0" max="1" step="0.05"></label>
+      <label class="check"><input type="checkbox" id="set-voice"> Spoken voices (units talk back, announcer, taunts)</label>
+      <label class="check"><input type="checkbox" id="set-muted"> Mute everything (M)</label>
+      <label class="check"><input type="checkbox" id="set-night"> Day and night cycle</label>
+      <div class="row"><button id="btn-test-sound" class="secondary">🐄 Test sound</button><button id="btn-settings-close">Done</button></div>
+    </div>
+  </div>
 
   <script src="js/vendor/peerjs.min.js"></script>
   <script type="module" src="js/main.js"></script>

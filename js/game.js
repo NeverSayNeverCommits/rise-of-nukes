@@ -2,11 +2,18 @@
 import { Renderer } from './render.js';
 import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit } from './sim/data.js';
 import { DT } from './sim/sim.js';
-import { sfx, toggleMute } from './sfx.js';
+import { sfx, toggleMute, say, music, setListener, audioSettings, setAudio } from './sfx.js';
+import { unitName, cowMood, lineFor, pokeLine, cityPokeLine, TAUNTS, CRATE_TEXT, STREAK, awards, rankIcon } from './flavor.js';
+import { SILLY } from './sim/extras.js';
+
+// Which built-in voice each unit type uses (any number works, it just picks a voice).
+const VOICE = { citizen: 1, infantry: 2, ranged: 3, cavalry: 4, siege: 5 };
+const PITCH = { citizen: 1.25, infantry: 0.95, ranged: 1.1, cavalry: 0.85, siege: 0.7 };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n) => Math.floor(n).toLocaleString('en');
+const pickOne = (a) => a[Math.floor(Math.random() * a.length)];
 const costHtml = (cost, res) => Object.entries(cost).map(([k, v]) => `<span class="${res && res[k] < v ? 'need' : ''}">${RES_ICON[k]} ${v}</span>`).join(' ');
 
 export class GameUI {
@@ -32,16 +39,25 @@ export class GameUI {
     this.defeatShown = false;
     this.idleIdx = 0;
     this.homeIdx = 0;
+    this.heat = 0;           // how much fighting is going on near me (drives the music)
+    this.lastVoice = 0;
+    this.pokes = { id: 0, n: 0, t: 0 };
+    this.streak = [];        // times of my recent kills
+    this.firstBlood = false;
+    this.nextMoo = performance.now() + 8000;
+    this.lastPhase = '';
 
     const city = this.world.s.blds.find((b) => b.owner === this.me && b.type === 'city');
     if (city) this.r.centreOn(city.x + 1.5, city.y + 1.5);
     this.bind();
+    music.play();
     this.running = true;
     requestAnimationFrame((t) => this.loop(t));
   }
 
   destroy() {
     this.running = false;
+    music.stop();
     for (const [el, ev, fn, opt] of this.listeners) el.removeEventListener(ev, fn, opt);
   }
 
@@ -61,6 +77,13 @@ export class GameUI {
       const dx = u.x - wx, dy = u.y - wy, d = dx * dx + dy * dy;
       const rr = UNITS[u.type].radius + 0.25;
       if (d < rr * rr && d < bd) { bd = d; best = u; }
+    }
+    if (best) return best;
+    for (const c of this.s.critters || []) {
+      if (!this.r.isVisible(c.x, c.y)) continue;
+      const dx = c.x - wx, dy = c.y - wy, d = dx * dx + dy * dy;
+      const rr = (c.mutant ? 0.5 : 0.35) + 0.3;
+      if (d < rr * rr && d < bd) { bd = d; best = c; }
     }
     if (best) return best;
     for (const b of this.s.blds) {
@@ -158,7 +181,9 @@ export class GameUI {
       if (g.ok) {
         const cits = this.mineSel().filter((u) => u.kind === 'u' && u.type === 'citizen').map((u) => u.id);
         this.send({ c: 'build', ids: cits, type: this.mode.type, x: g.x, y: g.y });
-        sfx.click();
+        sfx.play('place');
+        const c0 = this.world.get(cits[0]);
+        if (c0) this.speak(c0, 'work');
         if (!e.shiftKey) this.mode = null;
       } else { this.alert(g.why, 'bad'); sfx.error(); }
       return;
@@ -198,6 +223,7 @@ export class GameUI {
         if (this.sel.has(ent.id)) this.sel.delete(ent.id); else this.sel.add(ent.id);
       } else {
         this.sel = new Set(ent ? [ent.id] : []);
+        if (ent) this.clicked(ent);
       }
       return;
     }
@@ -205,8 +231,8 @@ export class GameUI {
     const [bx, by] = this.r.toWorld(Math.max(x, d.x), Math.max(y, d.y));
     const inBox = this.s.units.filter((u) => u.owner === this.me && u.x >= ax && u.x <= bx && u.y >= ay && u.y <= by);
     if (!e.shiftKey) this.sel = new Set();
-    // Prefer soldiers when the box has both soldiers and citizens? Keep both: it's simpler to understand.
     for (const u of inBox) this.sel.add(u.id);
+    if (inBox.length) { sfx.play('select'); this.speak(inBox.find((u) => u.type !== 'citizen') || inBox[0], 'select'); }
   }
 
   onDbl(e) {
@@ -226,9 +252,11 @@ export class GameUI {
     const units = mine.filter((e) => e.kind === 'u');
     const blds = mine.filter((e) => e.kind === 'b');
     if (units.length) {
-      if (target && w.enemy(this.me, target.owner)) {
+      if (target && w.hostile(this.me, target)) {
         this.send({ c: 'attack', ids: units.map((u) => u.id), t: target.id });
         this.r.addMarker(...w.centre(target), '#ff4040');
+        sfx.play('order');
+        this.speak(units.find((u) => u.type !== 'citizen') || units[0], 'attack');
         return;
       }
       if (target && target.kind === 'b' && target.owner === this.me) {
@@ -237,16 +265,20 @@ export class GameUI {
         if (cits.length) {
           this.send({ c: 'work', ids: cits.map((u) => u.id), t: target.id });
           this.r.addMarker(...w.centre(target), '#ffcc33');
+          this.speak(cits[0], 'work');
         }
         if (rest.length) this.send({ c: 'move', ids: rest.map((u) => u.id), x: wx, y: wy });
+        sfx.play('order');
         return;
       }
       this.send({ c: 'move', ids: units.map((u) => u.id), x: wx, y: wy });
       this.r.addMarker(wx, wy, '#7ee787');
+      sfx.play('order');
+      this.speak(units.find((u) => u.type !== 'citizen') || units[0], 'move');
       return;
     }
     for (const b of blds) {
-      if (target && target !== b && (target.kind === 'b' || w.enemy(this.me, target.owner))) this.send({ c: 'rally', b: b.id, t: target.id });
+      if (target && target !== b && target.kind !== 'c' && (target.kind === 'b' || w.enemy(this.me, target.owner))) this.send({ c: 'rally', b: b.id, t: target.id });
       else this.send({ c: 'rally', b: b.id, x: wx, y: wy });
     }
     this.r.addMarker(wx, wy, '#ffffff');
@@ -258,6 +290,9 @@ export class GameUI {
       const ids = this.mineSel().filter((e) => e.kind === 'u').map((u) => u.id);
       this.send({ c: 'move', ids, x: wx, y: wy, am: true });
       this.r.addMarker(wx, wy, '#ff9900');
+      sfx.play('order');
+      const u0 = this.world.get(ids[0]);
+      if (u0) this.speak(u0, 'attack');
     } else if (m.what === 'nuke') {
       this.send({ c: 'launch', b: m.b, x: wx, y: wy });
     }
@@ -281,6 +316,7 @@ export class GameUI {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { this.keys.add(k); e.preventDefault(); return; }
     if (k === 'Enter') { e.preventDefault(); this.openChat(); return; }
     if (k === 'Escape') {
+      if (!$('settings-panel').classList.contains('hidden')) { $('settings-panel').classList.add('hidden'); return; }
       if (this.mode) this.mode = null;
       else if (!$('game-menu').classList.contains('hidden')) this.toggleMenu(false);
       else if (this.sel.size) this.sel.clear();
@@ -338,6 +374,15 @@ export class GameUI {
     return `<table class="scores"><tr><th>Player</th><th>Team</th><th>Age</th><th>Cities</th><th>Units</th><th>Kills</th><th>Lost</th><th>☢</th></tr>${rows}</table>`;
   }
 
+  awardsHtml() {
+    const list = awards(this.s.players);
+    if (!list.length) return '';
+    return '<h3 class="awards-title">🏆 Awards</h3><div class="awards">' + list.map((a) => {
+      const p = this.s.players[a.p];
+      return `<div class="award"><span class="aicon">${a.icon}</span><div><b>${esc(a.title)}</b><br><span class="swatch" style="background:${p.color}"></span>${esc(p.name)} <span class="adesc">— ${esc(a.text)}</span></div></div>`;
+    }).join('') + '</div>';
+  }
+
   // ---------- alerts ----------
   alert(text, kind = 'info', pos = null) {
     const key = kind + text;
@@ -357,77 +402,245 @@ export class GameUI {
   chatLine(msg) {
     const el = document.createElement('div');
     el.className = 'line';
+    const taunt = msg.p >= 0 && /^\d{1,2}$/.test(msg.text.trim()) ? TAUNTS[+msg.text.trim()] : null;
     if (msg.p < 0) { el.classList.add('sys'); el.textContent = msg.text; }
-    else el.innerHTML = `<b style="color:${esc(msg.color || '#fff')}">${esc(msg.name)}:</b> ${esc(msg.text)}`;
+    else el.innerHTML = `<b style="color:${esc(msg.color || '#fff')}">${esc(msg.name)}:</b> ${taunt ? `<i>📣 ${esc(msg.text.trim())}. ${esc(taunt)}</i>` : esc(msg.text)}`;
+    if (taunt) say(taunt, 10 + msg.p, { pitch: 0.8 + (msg.p % 4) * 0.15, rate: 1 });
+    else if (msg.p >= 0 && msg.p !== this.me) sfx.play('click');
     const log = $('chat-log');
     log.appendChild(el);
     while (log.children.length > 8) log.firstChild.remove();
+  }
+
+  // A unit says something: speech bubble, plus spoken out loud if voices are on.
+  speak(u, kind, text) {
+    if (!u) return;
+    const now = performance.now();
+    if (!text && now - this.lastVoice < 1400) return;
+    this.lastVoice = now;
+    const cls = u.kind === 'u' ? UNITS[u.type].cls : 'inf';
+    const line = text || lineFor(cls, kind);
+    this.r.bubble(u.id, line);
+    if (u.kind === 'u') say(line, VOICE[u.type] || 0, { pitch: PITCH[u.type] || 1, rate: 1.15 });
+  }
+
+  // Clicked on a single thing.
+  clicked(e) {
+    const now = performance.now();
+    const p = this.pokes;
+    if (p.id === e.id && now - p.t < 1500) p.n++; else { p.id = e.id; p.n = 1; }
+    p.t = now;
+    if (e.kind === 'c') {
+      sfx.at(e.mutant ? 'mutant' : 'moo', e.x, e.y, 1.2);
+      this.r.bubble(e.id, e.mutant ? pickOne(['MOOOOAAARGH', 'Brains... I mean grass...', 'MOO. (menacingly)']) : p.n >= 4 ? 'Stop it. I am a cow.' : pickOne(['Moo.', 'Moo?', 'Mooooo.', '...moo']));
+      return;
+    }
+    if (e.owner !== this.me) return;
+    if (e.kind === 'b') {
+      sfx.play('select');
+      if (e.type === 'city' && p.n >= 5) { this.r.bubble(e.id, cityPokeLine()); say(this.r.bubbles.get(e.id).text, 9, { pitch: 1.1 }); p.n = 0; }
+      return;
+    }
+    sfx.play('select');
+    if (p.n >= 4) { const line = pokeLine(); this.speak(e, 'poke', line); if (p.n >= 7) { sfx.play('fart'); p.n = 0; } return; }
+    this.speak(e, 'select');
   }
 
   handleEvents(evs) {
     const w = this.world, me = this.me;
     const name = (p) => (this.s.players[p] ? this.s.players[p].name : '?');
     const [cx, cy] = this.r.toWorld(this.r.vw / 2, this.r.vh / 2);
+    const near = (x, y, d = 25) => Math.hypot(x - cx, y - cy) < d;
+    const now = performance.now();
     for (const e of evs) {
       const fresh = this.s.tick - e.tick < 60;
+      if (!fresh && e.type !== 'victory' && e.type !== 'eliminated') continue;
+      const seen = e.x == null || this.r.isVisible(e.x, e.y);
       switch (e.type) {
-        case 'error': if (e.p === me && fresh) { this.alert(e.msg, 'bad'); sfx.error(); } break;
+        case 'error': if (e.p === me) { this.alert(e.msg, 'bad'); sfx.error(); } break;
+        case 'placed': break;
+        case 'shot': {
+          if (!seen) break;
+          if (e.p === me || (e.x2 != null && this.isMineNear(e.x2, e.y2))) this.heat += 0.05;
+          const snd = e.cls === 'cow' ? 'hit' : e.melee ? 'sword' : e.cls === 'bld' ? (e.age >= 2 ? 'gun' : 'tower')
+            : e.cls === 'sie' ? (e.age >= 4 ? 'rocket' : e.age >= 2 ? 'cannon' : 'catapult')
+              : e.cls === 'cav' && e.age >= 3 ? 'cannon' : e.cls === 'rng' && e.age >= 3 ? 'mg' : e.age >= 2 ? 'gun' : 'bow';
+          sfx.at(snd, e.x, e.y, 0.9);
+          break;
+        }
         case 'attacked':
-          if (e.p === me && fresh) {
-            const now = performance.now();
+          if (e.p === me) {
+            this.heat += 0.08;
             // Only alert if the fight is off screen, and not too often.
             const onScreen = Math.abs(e.x - cx) < this.r.vw / this.r.cam.z / 2 && Math.abs(e.y - cy) < this.r.vh / this.r.cam.z / 2;
-            if (!onScreen && now - (this.lastAttackAlert || 0) > 8000) {
+            if (!onScreen && now - (this.lastAttackAlert || 0) > 10000) {
               this.lastAttackAlert = now;
               this.alert('You are under attack! (Space to look)', 'bad', [e.x, e.y]);
               this.r.ping(e.x, e.y);
               sfx.attack();
+              say(pickOne(['We are under attack!', 'Our people are being attacked!', 'Enemy forces sighted!', 'Help! Somebody is hitting us!']), 'announcer');
             }
           }
           break;
+        case 'die': {
+          if (seen) {
+            const r = Math.random();
+            sfx.at(r < 0.03 ? 'scream' : 'grunt', e.x, e.y, 0.8);
+          }
+          if (e.by === me) {
+            this.streak.push(now);
+            this.streak = this.streak.filter((t) => now - t < 12000);
+            const n = this.streak.length;
+            const hit = STREAK.find(([k]) => k === n);
+            if (hit) { this.alert(`🔥 ${hit[1]}`, 'good'); say(hit[1], 'announcer'); this.r.float(e.x, e.y, hit[1], '#ff9d2a', true); }
+          }
+          if (!this.firstBlood && e.by >= 0) {
+            this.firstBlood = true;
+            this.alert(`🩸 First blood: ${name(e.by)}!`, e.by === me ? 'good' : 'info');
+            say('First blood!', 'announcer');
+          }
+          break;
+        }
         case 'age':
-          if (e.p === me) { this.alert(`Welcome to the ${AGES[e.age]} Age!`, 'good'); sfx.age(); }
-          else this.alert(`${name(e.p)} reached the ${AGES[e.age]} Age`, 'info');
+          if (e.p === me) {
+            this.alert(`Welcome to the ${AGES[e.age]} Age!`, 'good');
+            sfx.age();
+            say(`Welcome to the ${AGES[e.age]} age.`, 'announcer');
+            for (const c of this.s.blds.filter((b) => b.owner === me && b.type === 'city')) this.r.fireworks(c.x + 1.5, c.y + 1.5, 3);
+          } else {
+            this.alert(`${name(e.p)} reached the ${AGES[e.age]} Age`, 'info');
+            if (e.age === 4) say(`${name(e.p)} has entered the Atomic age. Uh oh.`, 'announcer');
+          }
           break;
         case 'tech':
-          if (e.tech === 'manhattan') this.alert(e.p === me ? 'Manhattan Project complete. You can build Missile Silos.' : `☢ ${name(e.p)} completed the Manhattan Project!`, e.p === me ? 'good' : 'bad');
-          else if (e.p === me) { this.alert(`${TECHS[e.tech].name} researched`, 'good'); sfx.done(); }
+          if (e.tech === 'manhattan') {
+            this.alert(e.p === me ? 'Manhattan Project complete. You can build Missile Silos.' : `☢ ${name(e.p)} completed the Manhattan Project!`, e.p === me ? 'good' : 'bad');
+            say(e.p === me ? 'The Manhattan Project is complete. Try not to end the world.' : `Warning. ${name(e.p)} has the bomb.`, 'announcer');
+          } else if (e.p === me) { this.alert(`${TECHS[e.tech].name} researched`, 'good'); sfx.play('tech'); }
           break;
         case 'built':
-          if (e.p === me && fresh && (e.btype === 'city' || e.btype === 'silo')) { this.alert(`${BLDS[e.btype].names[this.pl.age]} complete`, 'good'); sfx.done(); }
+          if (e.p === me) {
+            if (e.btype === 'city' || e.btype === 'silo') { this.alert(`${BLDS[e.btype].names[this.pl.age]} complete`, 'good'); sfx.play('built'); if (e.btype === 'city') say('A new city has been founded.', 'announcer'); }
+            else if (near(e.x, e.y)) sfx.at('hammer', e.x, e.y);
+          }
           break;
+        case 'trained':
+          if (e.p === me && Math.random() < 0.35) {
+            const u = w.get(e.id);
+            if (u && near(u.x, u.y, 20)) { sfx.play('trained'); this.speak(u, 'select'); }
+          }
+          break;
+        case 'promote': {
+          if (seen) this.r.float(e.x, e.y, `${rankIcon(e.rank)} Promoted!`, '#ffd700', true);
+          if (e.p === me) {
+            sfx.play('promote');
+            const u = w.get(e.id);
+            if (u) this.speak(u, 'promo', pickOne(['I would like to thank my mother.', 'Promotion! Finally!', 'Does this come with a raise?', 'Call me sir now.', 'They grow up so fast.']));
+          }
+          break;
+        }
         case 'captured':
-          if (e.p === me) { this.alert(`You captured ${e.name || 'a city'}!`, 'good', [e.x, e.y]); sfx.done(); }
-          else if (e.from === me) { this.alert(`${e.name || 'A city'} was captured by ${name(e.p)}!`, 'bad', [e.x, e.y]); sfx.attack(); }
+          if (e.p === me) { this.alert(`You captured ${e.name || 'a city'}!`, 'good', [e.x, e.y]); sfx.play('capture'); say(`We have captured ${e.name || 'a city'}.`, 'announcer'); }
+          else if (e.from === me) { this.alert(`${e.name || 'A city'} was captured by ${name(e.p)}!`, 'bad', [e.x, e.y]); sfx.attack(); say(`We have lost ${e.name || 'a city'}!`, 'announcer'); }
           else this.alert(`${name(e.p)} captured a city from ${name(e.from)}`, 'info');
           break;
         case 'convert':
           if (e.from === me) this.alert('A building was lost to enemy territory', 'bad', [e.x, e.y]);
           break;
+        case 'destroyed':
+          if (seen && near(e.x, e.y, 30)) sfx.at('collapse', e.x, e.y);
+          break;
         case 'launch':
-          if (!fresh) break;
           this.lastAlertPos = [e.x, e.y];
           if (e.p === me) this.alert('☢ Missile away!', 'nuke');
           else this.alert(`☢ NUCLEAR LAUNCH DETECTED (${name(e.p)}) — Space to look`, 'nuke');
           this.r.ping(e.x, e.y);
           sfx.siren();
+          sfx.play('launch');
+          this.heat += 1;
+          say(e.p === me ? 'Missile away.' : 'Nuclear launch detected.', 'announcer', { interrupt: true });
           break;
         case 'nuke': {
-          if (!fresh) break;
           sfx.nuke();
           const d = Math.hypot(e.x - cx, e.y - cy);
-          if (d < 40) { const f = $('nuke-flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 80); }
-          this.alert(`☢ Doomsday Clock: ${this.s.doom}${w.settings.doomsday > 0 ? ' / ' + w.settings.doomsday : ''}`, 'bad');
+          if (d < 40) { const f = $('nuke-flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 120); }
+          const lim = w.settings.doomsday | 0;
+          this.alert(`☢ Doomsday Clock: ${this.s.doom}${lim > 0 ? ' / ' + lim : ''}`, 'bad');
+          setTimeout(() => sfx.play('bell'), 2500);
+          if (lim > 0 && lim - this.s.doom === 1) setTimeout(() => say('One more nuke and everybody loses. Just so you know.', 'announcer'), 4000);
           break;
         }
-        case 'intercept': if (fresh) { this.alert(`Missile shot down over ${name(e.victim)}'s territory!`, 'good'); sfx.boom(); } break;
-        case 'nukeReady': if (e.p === me) { this.alert('☢ Nuke ready to launch', 'good'); sfx.done(); } break;
-        case 'destroyed': if (fresh && this.r.isVisible(e.x, e.y) && Math.hypot(e.x - cx, e.y - cy) < 25) sfx.boom(); break;
+        case 'intercept': this.alert(`Missile shot down over ${name(e.victim)}'s territory!`, 'good'); sfx.play('intercept'); say('Missile intercepted!', 'announcer'); break;
+        case 'nukeReady': if (e.p === me) { this.alert('☢ Nuke ready to launch', 'good'); sfx.done(); say('Nuclear missile ready.', 'announcer'); } break;
         case 'eliminated':
+          if (!fresh) break;
           this.alert(e.p === me ? 'You have been defeated.' : `${name(e.p)} has been defeated!`, e.p === me ? 'bad' : 'info');
+          if (e.p !== me) say(`${name(e.p)} has been eliminated.`, 'announcer');
+          break;
+        // ----- the silly stuff -----
+        case 'silly': this.sillyEvent(e); break;
+        case 'crate': {
+          const t = e.kind === 'tech' ? TECHS[e.tech].name : '';
+          const text = CRATE_TEXT[e.kind](e, t);
+          if (e.p === me) {
+            this.alert(`🎁 ${text}`, e.kind === 'dud' || e.kind === 'map' ? 'info' : 'good', [e.x, e.y]);
+            sfx.play(e.kind === 'dud' ? 'boing' : 'crate');
+            if (e.kind === 'map') this.revealMap();
+          }
+          if (seen) this.r.float(e.x, e.y, e.kind === 'res' ? `+${e.amt} ${RES_ICON[e.res]}` : e.kind === 'dud' ? '🤷' : '🎁!', '#ffd700', true);
+          break;
+        }
+        case 'critter':
+          if (seen) {
+            sfx.at(e.mutant ? 'mutant' : 'moo', e.x, e.y, 0.9);
+            if (e.food) this.r.float(e.x, e.y, `+${e.food} ${RES_ICON.food}`, '#9be37a');
+          }
+          break;
+        case 'mutate':
+          if (seen) { sfx.at('mutant', e.x, e.y, 1.3); this.r.float(e.x, e.y, '☢ MUTANT COW!', '#7dff3a', true); }
+          if (near(e.x, e.y, 40)) this.alert('☢ A cow wandered into the fallout. It is not a cow any more.', 'bad', [e.x, e.y]);
+          break;
+        case 'meteorHit':
+          if (near(e.x, e.y, 35)) sfx.at('explode', e.x, e.y, 1.6), sfx.play('collapse', { v: 0.8 });
           break;
       }
     }
+  }
+
+  isMineNear(x, y) {
+    const tx = Math.floor(x), ty = Math.floor(y), w = this.world;
+    return tx >= 0 && ty >= 0 && tx < w.W && ty < w.H && w.terr[ty * w.W + tx] === this.me;
+  }
+
+  sillyEvent(e) {
+    const info = SILLY[e.kind];
+    if (!info) return;
+    let text = info.text;
+    if (e.kind === 'tax') {
+      const p = this.s.players[e.p];
+      text = e.p === this.me ? `You were the richest, so ${e.amt} of your resources went to everyone else. Sorry.` : `${p ? p.name : '?'} was the richest and had to share ${e.amt} resources. Thanks!`;
+    }
+    this.alert(`${info.title} ${text}`, e.kind === 'meteor' ? 'bad' : 'info', e.x != null ? [e.x, e.y] : null);
+    const ann = {
+      frogs: 'A plague of frogs! Ribbit.', happy: 'Happy hour! Drinks are on the house.', tax: 'Tax audit!', stampede: 'Cow stampede!',
+      drop: 'Supply drop incoming.', meteor: 'Meteor incoming! Take cover!', boom: 'Economic boom! Money for everyone!',
+    }[e.kind];
+    say(ann, 'announcer');
+    if (e.x != null) this.r.ping(e.x, e.y, '#ffd700');
+    if (e.kind === 'frogs') { for (let i = 0; i < 6; i++) setTimeout(() => sfx.play('ribbit', { v: 1 }), i * 400); }
+    else if (e.kind === 'happy') sfx.play('partyHorn');
+    else if (e.kind === 'tax' || e.kind === 'boom') sfx.play('kaching');
+    else if (e.kind === 'stampede') { for (let i = 0; i < 4; i++) setTimeout(() => sfx.play('moo', { v: 0.8, pan: (Math.random() - 0.5) * 1.5 }), i * 350); }
+    else if (e.kind === 'meteor') sfx.play('whistle', 7.5);
+    else if (e.kind === 'drop') sfx.play('crate');
+  }
+
+  revealMap() {
+    // The crate's treasure map: show a big random chunk of the map for a moment.
+    const w = this.world, r = this.r;
+    const cx = Math.floor(Math.random() * w.W), cy = Math.floor(Math.random() * w.H);
+    for (let y = Math.max(0, cy - 20); y < Math.min(w.H, cy + 20); y++) for (let x = Math.max(0, cx - 20); x < Math.min(w.W, cx + 20); x++) r.explored[y * w.W + x] = 1;
+    r.ping(cx, cy, '#ffd700');
   }
 
   // ---------- main loop ----------
@@ -451,6 +664,8 @@ export class GameUI {
       if (m.y < edge) dy -= sp; if (m.y > this.r.vh - edge) dy += sp;
     }
     if (dx || dy) { this.r.cam.x += dx; this.r.cam.y += dy; this.r.clampCam(); }
+    setListener(...this.r.viewCentre());
+    this.ambience(t, dt);
 
     const evs = this.world.events;
     if (evs.length) {
@@ -464,7 +679,7 @@ export class GameUI {
     const overCanvas = this.mouse.y > 34 && this.mouse.y < this.r.vh - 212;
     const hov = overCanvas && !this.mouse.down ? this.pick(this.mouse.x, this.mouse.y) : null;
     this.hover = hov ? hov.id : 0;
-    this.canvas.style.cursor = this.mode ? 'crosshair' : hov && this.world.enemy(this.me, hov.owner) && this.mineSel().some((e) => e.kind === 'u') ? 'crosshair' : 'default';
+    this.canvas.style.cursor = this.mode ? 'crosshair' : hov && this.world.hostile(this.me, hov) && this.mineSel().some((e) => e.kind === 'u') ? 'crosshair' : 'default';
 
     const ui = {
       sel: this.sel, hover: this.hover, alpha: this.session.alpha(),
@@ -480,19 +695,56 @@ export class GameUI {
     this.checkOver();
   }
 
+  // Music mood, random moos, sunset announcements.
+  ambience(t, dt) {
+    const s = this.s;
+    this.heat = Math.max(0, Math.min(1.5, this.heat - dt * 0.08));
+    music.setIntensity(s.missiles.length ? 1 : Math.min(1, this.heat));
+    music.age = this.pl.age;
+    music.mode = s.mods && s.mods.speed ? 'happy' : 'normal';
+    const now = performance.now();
+    if (now > this.nextMoo) {
+      this.nextMoo = now + 7000 + Math.random() * 12000;
+      const cows = (s.critters || []).filter((c) => this.r.onScreen(c.x, c.y, 0) && this.r.isVisible(c.x, c.y));
+      if (cows.length) {
+        const c = cows[Math.floor(Math.random() * cows.length)];
+        sfx.at(c.mutant ? 'mutant' : 'moo', c.x, c.y, 0.7);
+        this.r.bubble(c.id, c.mutant ? pickOne(['GRRRMOOO', 'hhhrrrrnnngh', 'MOO (radioactive)']) : pickOne(['Moo.', 'Moo!', 'Mooo?', 'Moo moo.', '*chews*', '*stares at you*']), 1800);
+      }
+    }
+    const ph = this.r.dayPhase();
+    if (ph !== this.lastPhase) {
+      if (this.lastPhase && ph === 'dusk') this.chatLine({ p: -1, text: '🌙 Night is falling.' });
+      if (this.lastPhase && ph === 'dawn') { this.chatLine({ p: -1, text: '🐓 Cock-a-doodle-doo! A new day.' }); }
+      this.lastPhase = ph;
+    }
+  }
+
   checkOver() {
     const s = this.s;
     if (!this.pl.alive && !this.defeatShown && !s.over) {
       this.defeatShown = true;
       this.showOver('DEFEAT', 'You lost all your cities. You can keep watching the rest of the game.');
+      sfx.play('defeat');
+      say('You have been defeated.', 'announcer', { interrupt: true });
     }
     if (s.over && !this.overShown) {
       this.overShown = true;
-      if (s.over.armageddon) this.showOver('☢ ARMAGEDDON ☢', 'The Doomsday Clock struck midnight. Too many nukes. Everybody loses.');
-      else if (s.over.winnerTeam === this.pl.team) this.showOver('VICTORY', 'Your enemies are defeated.');
-      else {
+      music.stop();
+      if (s.over.armageddon) {
+        this.showOver('☢ ARMAGEDDON ☢', 'The Doomsday Clock struck midnight. Too many nukes. Everybody loses. Well done, everyone.');
+        say('Armageddon. Everybody loses. The cockroaches win.', 'announcer', { interrupt: true });
+        sfx.play('defeat');
+      } else if (s.over.winnerTeam === this.pl.team) {
+        this.showOver('VICTORY', 'Your enemies are defeated.');
+        sfx.play('victory');
+        say('Victory!', 'announcer', { interrupt: true });
+        const [x, y] = this.r.viewCentre();
+        this.r.fireworks(x, y, 12);
+      } else {
         const win = s.players.filter((p) => p.team === s.over.winnerTeam).map((p) => p.name).join(' & ');
         this.showOver('DEFEAT', `${win} won the game.`);
+        sfx.play('defeat');
       }
     }
   }
@@ -500,7 +752,7 @@ export class GameUI {
   showOver(title, text) {
     $('over-title').textContent = title;
     $('over-text').textContent = text;
-    $('over-scores').innerHTML = this.scoreHtml();
+    $('over-scores').innerHTML = this.scoreHtml() + this.awardsHtml();
     $('game-over').classList.remove('hidden');
     this.r.spectate = true;
   }
@@ -517,7 +769,11 @@ export class GameUI {
     const lim = w.settings.doomsday | 0;
     $('doom').textContent = lim > 0 ? `☢ ${this.s.doom}/${lim}` : (this.s.doom ? `☢ ${this.s.doom}` : '');
     const secs = Math.floor(this.s.tick * DT);
-    $('clock').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    const ph = this.r.dayPhase();
+    $('clock').textContent = `${ph === 'night' ? '🌙' : ph === 'dusk' ? '🌇' : ph === 'dawn' ? '🌅' : '☀️'} ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    const m = this.s.mods || {};
+    const mods = [m.food && '🐸', m.speed && '🍺', m.gather && '📈'].filter(Boolean).join('');
+    if (mods) $('clock').textContent = mods + ' ' + $('clock').textContent;
     const idle = this.s.units.filter((u) => u.owner === me && u.type === 'citizen' && !u.ord).length;
     $('btn-idle').querySelector('span').textContent = idle;
     $('btn-idle').style.opacity = idle ? 1 : 0.5;
@@ -551,13 +807,22 @@ export class GameUI {
     }
     if (ents.length === 1) {
       const e = ents[0];
+      if (e.kind === 'c') {
+        const max = w.maxHp(e);
+        box.innerHTML = `<h3>${e.mutant ? '☢️🐄' : '🐄'} ${esc(unitName(e))}</h3>
+          <div class="stats">${e.mutant ? 'Mutant cow. Attacks anything nearby. Worth 300 food.' : 'A cow. Kill it for 120 food. Or just let it be.'}</div>
+          <div class="hpbar"><div style="width:${(100 * e.hp) / max}%"></div></div>
+          <div class="stats">HP ${Math.ceil(e.hp)}/${max}</div><div class="stats"><i>${esc(cowMood(e))}</i></div>`;
+        return;
+      }
       const owner = this.s.players[e.owner];
       if (e.kind === 'u') {
         const st = w.stats(e.owner, e.type);
-        box.innerHTML = `<h3>${UNITS[e.type].icon} ${esc(st.name)}</h3>
-          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${esc(owner.name)}</div>
-          <div class="hpbar"><div style="width:${(100 * e.hp) / st.hp}%"></div></div>
-          <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(st.hp)} · Attack ${st.atk.toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · Speed ${st.speed.toFixed(1)}</div>
+        const max = w.maxHp(e), mul = w.rankMul(e);
+        box.innerHTML = `<h3>${UNITS[e.type].icon} ${esc(st.name)} ${e.rank ? `<span class="rank">${rankIcon(e.rank)}</span>` : ''}</h3>
+          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${esc(owner.name)} · <i>${esc(unitName(e))}</i></div>
+          <div class="hpbar"><div style="width:${(100 * e.hp) / max}%"></div></div>
+          <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(max)} · Attack ${(st.atk * mul).toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · Speed ${st.speed.toFixed(1)}${e.kills ? ` · Kills ${e.kills}` : ''}</div>
           <div class="stats">${e.owner === this.me ? this.orderText(e) : ''}</div>`;
       } else {
         const d = BLDS[e.type];
@@ -580,8 +845,8 @@ export class GameUI {
         }
         box.innerHTML = `<h3>${d.icon} ${esc(name)}</h3>
           <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${esc(owner.name)}</div>
-          <div class="hpbar"><div style="width:${(100 * e.hp) / d.hp}%"></div></div>
-          <div class="stats">HP ${Math.ceil(e.hp)}/${d.hp}</div>${extra}`;
+          <div class="hpbar"><div style="width:${(100 * e.hp) / w.maxHp(e)}%"></div></div>
+          <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(w.maxHp(e))}</div>${extra}`;
       }
       return;
     }
@@ -595,7 +860,7 @@ export class GameUI {
     let html = `<h3>${ents.length} selected</h3><div class="multi">`;
     for (const [, list] of groups) {
       for (const e of list.slice(0, 40)) {
-        const max = e.kind === 'u' ? w.stats(e.owner, e.type).hp : BLDS[e.type].hp;
+        const max = w.maxHp(e);
         const icon = e.kind === 'u' ? UNITS[e.type].icon : BLDS[e.type].icon;
         html += `<div class="mu" data-ids="${e.id}" title="${esc(e.kind === 'u' ? w.stats(e.owner, e.type).name : BLDS[e.type].names[0])}">${icon}<div class="hb"><div style="width:${(100 * e.hp) / max}%"></div></div></div>`;
       }
