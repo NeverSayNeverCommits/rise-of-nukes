@@ -93,6 +93,7 @@
         <span id="age-label"></span>
         <span id="doom" title="Doomsday Clock: when it hits the limit, everybody loses."></span>
         <span id="clock"></span>
+        <button id="btn-full" class="small secondary" title="Fullscreen (F9). Makes screen-edge scrolling work on all sides.">⛶</button>
         <button id="btn-sound" class="small secondary" title="Sound and display settings">🔊</button>
         <button id="btn-menu" class="small" title="Menu">☰</button>
       </div>
@@ -134,6 +135,9 @@
       <label class="check"><input type="checkbox" id="set-voice"> Spoken voices (units talk back, announcer, taunts)</label>
       <label class="check"><input type="checkbox" id="set-muted"> Mute everything (M)</label>
       <label class="check"><input type="checkbox" id="set-night"> Day and night cycle</label>
+      <label>Mouse wheel <select id="set-wheel"><option value="zoom">Zooms (Ctrl+wheel also zooms)</option><option value="scroll">Scrolls the map (Shift = sideways, Ctrl = zoom)</option></select></label>
+      <label class="check"><input type="checkbox" id="set-edge"> Keep scrolling when the mouse leaves past the edge of the window (handy in a browser window)</label>
+      <div class="hint">Tip: <b>⛶</b> in the top bar (or <b>F9</b>) makes the game fullscreen. Then screen-edge scrolling works on all four sides. You can also drag with the middle mouse button or the minimap.</div>
       <div class="row"><button id="btn-test-sound" class="secondary">🐄 Test sound</button><button id="btn-settings-close">Done</button></div>
     </div>
   </div>

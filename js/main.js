@@ -186,6 +186,8 @@ function openSettings() {
   $('set-vol').value = a.vol; $('set-music').value = a.music;
   $('set-voice').checked = a.voice; $('set-muted').checked = a.muted;
   $('set-night').checked = localStorage.getItem('ron-night') !== '0';
+  $('set-wheel').value = localStorage.getItem('ron-wheel') || 'zoom';
+  $('set-edge').checked = localStorage.getItem('ron-edge') !== '0';
   $('settings-panel').classList.remove('hidden');
 }
 $('btn-settings').addEventListener('click', () => { sfx.unlock(); openSettings(); });
@@ -201,6 +203,8 @@ $('set-night').addEventListener('change', (e) => {
   localStorage.setItem('ron-night', e.target.checked ? '1' : '0');
   if (game) game.r.noNight = !e.target.checked;
 });
+$('set-wheel').addEventListener('change', (e) => localStorage.setItem('ron-wheel', e.target.value));
+$('set-edge').addEventListener('change', (e) => localStorage.setItem('ron-edge', e.target.checked ? '1' : '0'));
 $('btn-test-sound').addEventListener('click', () => { sfx.unlock(); sfx.play('moo', { v: 1 }); setTimeout(() => say('Moo. This is a test cow.', 1), 900); });
 
 // A random silly line under the title.

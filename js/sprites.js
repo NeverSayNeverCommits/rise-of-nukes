@@ -481,6 +481,38 @@ const DRAW = {
     d.rect(d.X(0.92), d.Y(0.08), W * 0.06, W * 0.84, d.c);
     d.l.fillStyle = '#ff3030'; d.l.beginPath(); d.l.arc(d.X(0.12), d.Y(0.15), 3, 0, 7); d.l.arc(d.X(0.88), d.Y(0.15), 3, 0, 7); d.l.fill(); d.anyLit = true;
   },
+  airfield(d, age) {
+    const W = d.W, g = d.g;
+    d.ground('#6f7a5c', 0.02);
+    // runway with dashed centre line
+    d.rect(d.X(0.04), d.Y(0.62), W * 0.92, W * 0.22, '#3d3f42');
+    g.fillStyle = '#e9e9e9';
+    for (let i = 0; i < 7; i++) g.fillRect(d.X(0.08 + i * 0.13), d.Y(0.725), W * 0.07, 2);
+    g.fillStyle = '#f2c500'; g.fillRect(d.X(0.04), d.Y(0.62), 3, W * 0.22); g.fillRect(d.X(0.96) - 3, d.Y(0.62), 3, W * 0.22);
+    // runway lights (lit at night)
+    d.l.fillStyle = '#9fd8ff';
+    for (let i = 0; i < 9; i++) { d.l.fillRect(d.X(0.06 + i * 0.11), d.Y(0.615), 2, 2); d.l.fillRect(d.X(0.06 + i * 0.11), d.Y(0.84), 2, 2); }
+    d.anyLit = true;
+    // curved hangar
+    const hx = d.X(0.06), hy = d.Y(0.1), hw = W * 0.52, hd = W * 0.4, hh = W * 0.2;
+    d.shadow(hx, hy, hw, hd, hh);
+    g.fillStyle = age >= 4 ? '#c8ccd0' : '#7b8471';
+    g.beginPath(); g.moveTo(hx, hy + hd); g.lineTo(hx, hy + hd - hh * 0.4); g.quadraticCurveTo(hx + hw / 2, hy - hh * 1.2, hx + hw, hy + hd - hh * 0.4); g.lineTo(hx + hw, hy + hd); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1; g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,0.15)';
+    for (let i = 1; i < 6; i++) { g.beginPath(); g.moveTo(hx + (hw * i) / 6, hy + hd); g.lineTo(hx + (hw * i) / 6, hy + hd - hh * 0.9); g.stroke(); }
+    g.fillStyle = '#1f2326'; g.fillRect(hx + hw * 0.2, hy + hd - hh * 0.55, hw * 0.6, hh * 0.55);
+    d.rect(hx, hy + hd - 3, hw, 3, d.c);
+    // control tower
+    d.box(d.X(0.72), d.Y(0.18), W * 0.14, W * 0.12, W * 0.42, '#d9dcdf', '#b9bdc1');
+    d.rect(d.X(0.7), d.Y(0.18) - W * 0.46, W * 0.18, W * 0.07, '#22343f');
+    g.fillStyle = 'rgba(160,220,255,0.45)'; g.fillRect(d.X(0.71), d.Y(0.18) - W * 0.45, W * 0.16, W * 0.03);
+    d.l.fillStyle = '#ff4040'; d.l.beginPath(); d.l.arc(d.X(0.79), d.Y(0.18) - W * 0.5, 2.5, 0, 7); d.l.fill();
+    d.windows(d.X(0.72), d.Y(0.3) - W * 0.4, W * 0.14, W * 0.3, 1, 3, { litChance: 0.8 });
+    // windsock
+    g.strokeStyle = '#555'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(d.X(0.92), d.Y(0.5)); g.lineTo(d.X(0.92), d.Y(0.5) - W * 0.2); g.stroke();
+    g.fillStyle = '#ff7a1a'; g.beginPath(); g.moveTo(d.X(0.92), d.Y(0.5) - W * 0.2); g.lineTo(d.X(0.8), d.Y(0.5) - W * 0.17); g.lineTo(d.X(0.8), d.Y(0.5) - W * 0.14); g.lineTo(d.X(0.92), d.Y(0.5) - W * 0.15); g.fill();
+  },
 };
 
 // Industrial factory with a sawtooth roof and chimneys (tank factory, arms factory).

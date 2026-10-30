@@ -12,7 +12,7 @@ import { PLAYER_COLORS } from './sim/data.js';
 import { NATION_KEYS } from './sim/nations.js';
 import { HostNet, ClientNet } from './net.js';
 
-export const VERSION = 3;
+export const VERSION = 4;
 const HASH_EVERY = 100; // ticks (5 seconds)
 export const MAX_PLAYERS = 8;
 

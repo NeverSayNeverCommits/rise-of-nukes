@@ -3,7 +3,7 @@
 import {
   RES, AGES, AGE_UP, GATHER_RATE, CITY_INCOME, BUILD_RATE, POP_MAX, CITY_MIN_DIST, ATTRITION,
   FALLOUT_DMG, MULT, UNITS, BLDS, TECHS, NUKE, START_RES, MAP_SIZES, cityLimit, cityRadius, techSum, gatherMult,
-  forNation, techCost, techTime,
+  forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime,
 } from './data.js';
 import { NATIONS, NATION_KEYS, NATION_UNIQUE, nationOf, nbonus } from './nations.js';
 import { genMap, T, DEP } from './map.js';
@@ -136,6 +136,9 @@ export class World {
           Object.assign(st, un.set || {});
         }
         st.hp *= mil ? hpB : 1; st.atk *= mil ? atkB : 1; st.speed *= spB; st.time *= trainF;
+        // Who can shoot at planes: classes with an air multiplier, and foot soldiers only once they have guns.
+        st.air = !!d.air; st.bomb = !!d.bomb; st.aaOnly = !!d.aaOnly;
+        st.aa = !d.bomb && MULT[d.cls].air > 0 && (a >= 2 || (d.cls !== 'inf' && d.cls !== 'rng'));
         c[k] = st;
       }
     }
@@ -143,6 +146,12 @@ export class World {
   }
 
   bldMaxHp(b) { return this.bldHp(b.type, b.owner); }
+  // Worker slots and gather speed of a gather building, after upgrades.
+  slots(b) { return BLDS[b.type].slots + UPGRADE.slots * (b.lvl || 0); }
+  lvlMul(b) { return 1 + UPGRADE.rate * (b.lvl || 0); }
+  isAir(e) { return e.kind === 'u' && !!UNITS[e.type].air; }
+  // Can unit u (with stats st) shoot at target t?
+  canHit(st, t) { const air = this.isAir(t); return air ? st.aa : !st.aaOnly; }
   bldHp(type, owner) { return BLDS[type].hp * (1 + nbonus(this.s.players[owner], 'bldHp')); }
   maxHp(e) { return e.kind === 'u' ? this.uMax(e) : e.kind === 'c' ? (e.mutant ? MUTANT.hp : COW.hp) : this.bldMaxHp(e); }
 
@@ -188,6 +197,7 @@ export class World {
       ord: null, path: [], pi: 0, scan: 0, rep: 0, working: false, fx: 0, fy: 1,
     };
     u.hp = this.stats(owner, type).hp;
+    if (UNITS[type].bomb) u.ammo = 1;
     this.s.units.push(u);
     this.byId.set(u.id, u);
     return u;
@@ -198,7 +208,7 @@ export class World {
     const b = {
       kind: 'b', id: this.newId(), type, owner, x, y, size: d.size,
       hp: this.bldHp(type, owner) * (done ? 1 : 0.1), prog: done ? d.time : 0, done, q: [], rally: null,
-      stock: 0, cd: 0, tgt: 0, lastAtk: -1, scan: 0,
+      stock: 0, cd: 0, tgt: 0, lastAtk: -1, scan: 0, lvl: 0,
     };
     this.s.blds.push(b);
     this.byId.set(b.id, b);
@@ -368,7 +378,7 @@ export class World {
       case 'attack': {
         const t = this.get(cmd.t);
         if (!t || t.hp <= 0) break;
-        for (const u of ownUnits()) this.setOrder(u, { k: 'attack', t: t.id });
+        for (const u of ownUnits()) if (this.canHit(this.stats(p, u.type), t)) this.setOrder(u, { k: 'attack', t: t.id });
         break;
       }
       case 'work': {
@@ -436,6 +446,18 @@ export class World {
         this.pay(p, tc);
         pl.pending[cmd.tech] = 1;
         b.q.push({ k: 'tech', type: cmd.tech, t: tt, total: tt, cost: tc });
+        break;
+      }
+      case 'upgrade': {
+        const b = ownBld();
+        if (!b || !b.done || !UPGRADE[b.type]) break;
+        const lvl = (b.lvl || 0) + 1;
+        if (lvl > pl.age || b.q.some((it) => it.k === 'upg')) break;
+        const cost = upgradeCost(b.type, lvl);
+        if (!this.canAfford(p, cost)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
+        this.pay(p, cost);
+        const t = upgradeTime(lvl);
+        b.q.push({ k: 'upg', type: 'upg', t, total: t, cost });
         break;
       }
       case 'cancel': {
@@ -585,14 +607,16 @@ export class World {
   }
 
   // Find the closest enemy (unit or building) within range r of (x, y).
-  findEnemy(p, x, y, r, unitsOnly = false) {
+  // air: 'yes' = any unit, 'no' = skip planes, 'only' = planes only.
+  findEnemy(p, x, y, r, unitsOnly = false, air = 'yes') {
     let best = null, bd = 1e9;
     this.unitsNear(x, y, r, (u) => {
       if (u.hp <= 0 || !this.enemy(p, u.owner)) return;
+      if (air !== 'yes' && (air === 'only') !== !!UNITS[u.type].air) return;
       const dx = u.x - x, dy = u.y - y, d = dx * dx + dy * dy;
       if (d <= r * r && (d < bd || (d === bd && u.id < best.id))) { bd = d; best = u; }
     });
-    if (best || unitsOnly) return best;
+    if (best || unitsOnly || air === 'only') return best;
     for (const b of this.s.blds) {
       if (b.hp <= 0 || !this.enemy(p, b.owner)) continue;
       const d = this.edgeDist(x, y, b);
@@ -612,17 +636,17 @@ export class World {
       const d = BLDS[b.type];
       if (!d.gather) continue;
       const n = count.get(b.id) || 0;
-      if (n < d.slots) { count.set(b.id, n + 1); continue; }
+      if (n < this.slots(b)) { count.set(b.id, n + 1); continue; }
       // full: find nearest other building of this type with room
       let best = null, bd = 1e9;
       for (const o of this.s.blds) {
         if (o.type !== b.type || o.owner !== u.owner || !o.done || o.hp <= 0 || o.id === b.id) continue;
-        if ((count.get(o.id) || 0) >= d.slots) continue;
+        if ((count.get(o.id) || 0) >= this.slots(o)) continue;
         const dd = this.edgeDist(u.x, u.y, o);
         if (dd < bd) { bd = dd; best = o; }
       }
       if (best) { count.set(best.id, (count.get(best.id) || 0) + 1); this.setOrder(u, { k: 'work', t: best.id }); }
-      else { this.setOrder(u, null); this.event({ type: 'error', p: u.owner, msg: `${d.names[0]} is full (5 workers)` }); }
+      else { this.setOrder(u, null); this.event({ type: 'error', p: u.owner, msg: `${d.names[0]} is full (${this.slots(b)} workers). Upgrade it for more room.` }); }
     }
     this.workerCount = count;
   }
@@ -708,13 +732,13 @@ export class World {
     const [tx, ty] = this.centre(t);
     const dx = tx - u.x, dy = ty - u.y, d = Math.sqrt(dx * dx + dy * dy);
     if (d > 1e-6) { u.fx = dx / d; u.fy = dy / d; }
-    this.event({ type: 'shot', p: u.owner, cls: st.cls, age: this.s.players[u.owner].age, x: u.x, y: u.y, x2: tx, y2: ty, melee: st.range < 1, ut: u.type, uq: st.uniq });
+    this.event({ type: 'shot', p: u.owner, cls: st.cls, age: this.s.players[u.owner].age, x: u.x, y: u.y, x2: tx, y2: ty, melee: st.range < 1, ut: u.type, uq: st.uniq, fa: st.air ? 1 : 0, ta: this.isAir(t) ? 1 : 0 });
     let atk = st.atk * this.rankMul(u);
     if (this.tigers[u.owner] && u.hp < this.uMax(u) * 0.5) atk *= 1.5;
     this.damage(t, atk * MULT[st.cls][this.clsOf(t)], u.owner, u.id);
     if (st.splash > 0) {
       this.unitsNear(tx, ty, st.splash + 0.5, (o) => {
-        if (o === t || o.hp <= 0 || !this.enemy(u.owner, o.owner)) return;
+        if (o === t || o.hp <= 0 || !this.enemy(u.owner, o.owner) || UNITS[o.type].air) return;
         const ex = o.x - tx, ey = o.y - ty;
         if (ex * ex + ey * ey <= st.splash * st.splash) this.damage(o, atk * 0.5 * MULT[st.cls][UNITS[o.type].cls], u.owner, u.id);
       });
@@ -745,8 +769,9 @@ export class World {
       // Let the victim's owner know (UI throttles these).
       this.event({ type: 'attacked', p: t.owner, x: cx, y: cy });
       // Idle units that are hit fight back.
-      if (t.kind === 'u' && !t.ord && UNITS[t.type].cls !== 'cit') {
-        const att = this.findEnemy(t.owner, t.x, t.y, 10, true);
+      if (t.kind === 'u' && !t.ord && UNITS[t.type].cls !== 'cit' && !UNITS[t.type].air) {
+        const ts = this.stats(t.owner, t.type);
+        const att = this.findEnemy(t.owner, t.x, t.y, 10, true, ts.aaOnly ? 'only' : ts.aa ? 'yes' : 'no');
         if (att) { t.ord = { k: 'attack', t: att.id, auto: true, hx: t.x, hy: t.y }; t.path = []; t.pi = 0; t.rep = 0; }
       }
     }
@@ -757,6 +782,7 @@ export class World {
     u.px = u.x; u.py = u.y;
     if (u.cd > 0) u.cd -= DT;
     u.working = false;
+    if (st.air) { this.updateAir(u, st); return; }
     const o = u.ord;
     const mil = st.cls !== 'cit' && UNITS[u.type].support !== 'band';
 
@@ -765,7 +791,7 @@ export class World {
       u.scan--;
       if (u.scan <= 0) {
         u.scan = 8 + (u.id % 5);
-        const e = this.findEnemy(u.owner, u.x, u.y, st.sight) || findMutant(this, u.x, u.y, st.sight);
+        const e = this.findEnemy(u.owner, u.x, u.y, st.sight, st.aaOnly, st.aaOnly ? 'only' : st.aa ? 'yes' : 'no') || (st.aaOnly ? null : findMutant(this, u.x, u.y, st.sight));
         if (e) {
           const resume = o && o.k === 'move' ? { ...o } : null;
           u.ord = { k: 'attack', t: e.id, auto: true, resume, hx: u.x, hy: u.y };
@@ -790,7 +816,7 @@ export class World {
     }
     if (o.k === 'attack') {
       const t = this.get(o.t);
-      const lost = !t || t.hp <= 0 || !this.hostile(u.owner, t);
+      const lost = !t || t.hp <= 0 || !this.hostile(u.owner, t) || !this.canHit(st, t);
       // Auto targets: give up if they lead us too far away.
       const tooFar = t && o.auto && !o.resume && o.hx != null && ((t.kind !== 'b' ? (t.x - o.hx) * (t.x - o.hx) + (t.y - o.hy) * (t.y - o.hy) : 0) > (st.sight + 5) * (st.sight + 5));
       if (lost || tooFar) {
@@ -819,7 +845,7 @@ export class World {
         if (b.prog >= d.time) this.finishBld(b);
       } else if (d.gather) {
         const pl = this.s.players[u.owner];
-        const amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather) * this.gathMul[d.gather];
+        const amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather) * this.gathMul[d.gather] * this.lvlMul(b);
         pl.res[d.gather] += amt * DT;
         pl.st.gath[d.gather] += amt * DT;
         this.rates[u.owner][d.gather] += amt;
@@ -828,6 +854,96 @@ export class World {
       } else {
         this.setOrder(u, null);
       }
+    }
+  }
+
+  // ---------- planes ----------
+  // Planes fly in straight lines over anything. They don't push each other around.
+  fly(u, x, y, speed, tol) {
+    const dx = x - u.x, dy = y - u.y, d = Math.sqrt(dx * dx + dy * dy);
+    if (d <= tol + 1e-6) return true;
+    u.fx = dx / d; u.fy = dy / d;
+    const step = speed * this.spdMul * DT;
+    if (step >= d - tol) { u.x = x - u.fx * tol; u.y = y - u.fy * tol; return true; }
+    u.x += u.fx * step; u.y += u.fy * step;
+    return false;
+  }
+
+  // Nearest own airfield (or city) to land at and reload.
+  homeBase(u) {
+    let best = null, bd = 1e18;
+    for (const b of this.s.blds) {
+      if (b.owner !== u.owner || !b.done || b.hp <= 0 || (b.type !== 'airfield' && b.type !== 'city')) continue;
+      const [cx, cy] = this.centre(b);
+      const d = (cx - u.x) * (cx - u.x) + (cy - u.y) * (cy - u.y) + (b.type === 'city' ? 400 : 0); // prefer airfields
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
+
+  updateAir(u, st) {
+    let o = u.ord;
+    // Fighters look for enemy planes when idle or attack-moving.
+    if (!st.bomb && (!o || (o.k === 'move' && o.am))) {
+      u.scan--;
+      if (u.scan <= 0) {
+        u.scan = 8 + (u.id % 5);
+        const e = this.findEnemy(u.owner, u.x, u.y, st.sight, true, 'only');
+        if (e) { u.ord = { k: 'attack', t: e.id, auto: true, resume: o && o.k === 'move' ? { ...o } : null }; o = u.ord; }
+      }
+    }
+    if (!o) {
+      if (st.bomb && !u.ammo) u.ord = { k: 'rearm' };
+      return;
+    }
+    if (o.k === 'move') { if (this.fly(u, o.x, o.y, st.speed, 0)) u.ord = null; return; }
+    if (o.k === 'rearm') {
+      const base = this.homeBase(u);
+      if (!base) { u.ord = null; return; } // nowhere to land: circle around, out of bombs
+      const [bx, by] = this.centre(base);
+      if (!this.fly(u, bx, by, st.speed, 0.6)) { u.rt = 0; return; }
+      u.rt = (u.rt || 0) + DT;
+      if (u.rt >= UNITS[u.type].rearm) {
+        u.ammo = 1; u.rt = 0;
+        const r = o.resume, t = r && this.get(r.t);
+        u.ord = t && t.hp > 0 && this.hostile(u.owner, t) ? r : null;
+      }
+      return;
+    }
+    if (o.k === 'attack') {
+      const t = this.get(o.t);
+      if (!t || t.hp <= 0 || !this.hostile(u.owner, t) || !this.canHit(st, t)) { this.setOrder(u, o.resume || null); return; }
+      const [tx, ty] = this.centre(t);
+      if (st.bomb) {
+        if (!u.ammo) { u.ord = { k: 'rearm', resume: { k: 'attack', t: t.id } }; return; }
+        if (this.fly(u, tx, ty, st.speed, 0.2)) {
+          this.dropBombs(u, st, tx, ty);
+          u.ammo = 0;
+          u.ord = { k: 'rearm', resume: { k: 'attack', t: t.id } };
+        }
+        return;
+      }
+      if (this.edgeDist(u.x, u.y, t) - st.radius > st.range) this.fly(u, tx, ty, st.speed, 0);
+      else this.attack(u, t, st);
+    }
+  }
+
+  // A bomber's whole load lands around (x, y): heavy damage to buildings, and hurts units nearby.
+  dropBombs(u, st, x, y) {
+    const r = st.splash, atk = st.atk * this.rankMul(u) * (this.tigers[u.owner] && u.hp < this.uMax(u) * 0.5 ? 1.5 : 1);
+    this.event({ type: 'bomb', p: u.owner, x, y, r, age: this.s.players[u.owner].age });
+    this.unitsNear(x, y, r + 0.5, (o) => {
+      if (o.hp <= 0 || !this.enemy(u.owner, o.owner) || UNITS[o.type].air) return;
+      const dx = o.x - x, dy = o.y - y;
+      if (dx * dx + dy * dy <= r * r) this.damage(o, atk * 0.6 * MULT.bomb[UNITS[o.type].cls], u.owner, u.id);
+    });
+    for (const b of this.s.blds) {
+      if (b.hp <= 0 || !this.enemy(u.owner, b.owner)) continue;
+      if (this.edgeDist(x, y, b) <= r * 0.5) this.damage(b, atk * MULT.bomb.bld, u.owner, u.id);
+    }
+    for (const c of this.s.critters) {
+      const dx = c.x - x, dy = c.y - y;
+      if (dx * dx + dy * dy <= r * r) this.damage(c, atk * 0.6, u.owner, u.id);
     }
   }
 
@@ -867,10 +983,10 @@ export class World {
   // Push overlapping units apart a little each tick.
   separate() {
     for (const u of this.s.units) {
-      if (u.hp <= 0) continue;
+      if (u.hp <= 0 || UNITS[u.type].air) continue;
       const ru = UNITS[u.type].radius;
       this.unitsNear(u.x, u.y, 1, (o) => {
-        if (o.id <= u.id || o.hp <= 0) return;
+        if (o.id <= u.id || o.hp <= 0 || UNITS[o.type].air) return;
         const ro = UNITS[o.type].radius;
         let dx = o.x - u.x, dy = o.y - u.y;
         let d2 = dx * dx + dy * dy;
@@ -931,7 +1047,7 @@ export class World {
       if (t && b.cd <= 0) {
         b.cd = d.cd;
         const mul = MULT.bld[this.clsOf(t)] * (1 + 0.25 * pl.age);
-        this.event({ type: 'shot', p, cls: 'bld', age: pl.age, x: cx, y: cy, x2: t.x, y2: t.y, melee: false });
+        this.event({ type: 'shot', p, cls: 'bld', age: pl.age, x: cx, y: cy, x2: t.x, y2: t.y, melee: false, ta: this.isAir(t) ? 1 : 0 });
         this.damage(t, d.atk * mul, p);
       }
     }
@@ -953,6 +1069,9 @@ export class World {
       delete pl.pending[it.type];
       this.refreshStats(p);
       this.event({ type: 'tech', p, tech: it.type });
+    } else if (it.k === 'upg') {
+      b.lvl = (b.lvl || 0) + 1;
+      this.event({ type: 'upgraded', p, id: b.id, btype: b.type, lvl: b.lvl, x: b.x + b.size / 2, y: b.y + b.size / 2 });
     } else if (it.k === 'nuke') {
       b.stock++;
       this.event({ type: 'nukeReady', p, id: b.id });
@@ -1150,7 +1269,7 @@ export class World {
     let near = false;
     const cx = b.x + 1.5, cy = b.y + 1.5;
     this.unitsNear(cx, cy, 7, (u) => {
-      if (u.owner === by && u.hp > 0 && UNITS[u.type].cls !== 'cit') {
+      if (u.owner === by && u.hp > 0 && UNITS[u.type].cls !== 'cit' && !UNITS[u.type].air) {
         const dx = u.x - cx, dy = u.y - cy;
         if (dx * dx + dy * dy <= 49) near = true;
       }
@@ -1210,7 +1329,7 @@ export class World {
     const s = this.s;
     mix(s.tick); mix(s.nextId); mix(s.rng); mix(s.units.length); mix(s.blds.length);
     for (const u of s.units) { mix(u.id); mix(Math.round(u.x * 1000)); mix(Math.round(u.y * 1000)); mix(Math.round(u.hp * 100)); }
-    for (const b of s.blds) { mix(b.id); mix(b.owner); mix(Math.round(b.hp * 100)); mix(b.q.length); }
+    for (const b of s.blds) { mix(b.id); mix(b.owner); mix(Math.round(b.hp * 100)); mix(b.q.length); mix(b.lvl || 0); }
     for (const p of s.players) for (const k of RES) mix(Math.round(p.res[k] * 100));
     for (const c of s.critters) { mix(c.id); mix(Math.round(c.x * 1000)); mix(Math.round(c.y * 1000)); mix(Math.round(c.hp * 100)); }
     mix(s.crates.length); mix(s.meteors.length);

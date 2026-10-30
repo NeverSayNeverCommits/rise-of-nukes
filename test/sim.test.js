@@ -30,7 +30,7 @@ function botCommands(w, tick) {
     if (step % 3 === 0) cmds.push({ p, c: 'train', b: city.id, type: 'citizen' });
     if (step % 10 === 1) cmds.push({ p, c: 'research', b: city.id, tech: 'age' });
     // Try to build something somewhere around the city.
-    const types = ['farm', 'lumber', 'mine', 'barracks', 'stable', 'library', 'workshop', 'tower', 'oilwell', 'city'];
+    const types = ['farm', 'lumber', 'mine', 'barracks', 'stable', 'library', 'workshop', 'tower', 'oilwell', 'city', 'airfield'];
     const type = types[step % types.length];
     if (cits.length) {
       outer: for (let r = 2; r < 14; r++) {
@@ -46,7 +46,9 @@ function botCommands(w, tick) {
     for (const b of w.s.blds.filter((b) => b.owner === p && b.done)) {
       if (b.type === 'barracks') cmds.push({ p, c: 'train', b: b.id, type: ['infantry', 'ranged', 'oompah', 'bowler'][step % 4] });
       if (b.type === 'stable') cmds.push({ p, c: 'train', b: b.id, type: ['cavalry', 'scooter', 'jeepney'][step % 3] });
-      if (b.type === 'workshop') cmds.push({ p, c: 'train', b: b.id, type: 'siege' });
+      if (b.type === 'workshop') cmds.push({ p, c: 'train', b: b.id, type: step % 2 ? 'siege' : 'aagun' });
+      if (b.type === 'airfield') cmds.push({ p, c: 'train', b: b.id, type: step % 2 ? 'fighter' : 'bomber' });
+      if (BLDS[b.type].gather && step % 5 === 2) cmds.push({ p, c: 'upgrade', b: b.id });
       if (b.type === 'library') for (const t of ['agri1', 'wood1', 'civics', 'weap1', 'armor1', 'manhattan', 'autobahn', 'seven11', 'karaoke', 'tigers']) cmds.push({ p, c: 'research', b: b.id, tech: t });
     }
     // Every so often send the army at the next player's capital.
@@ -227,6 +229,73 @@ assert.ok(target.hp <= 1, 'city ruined');
   const x0 = u0.x, x1 = u1.x; z.walk(u0, 2); z.walk(u1, 2);
   assert.ok(Math.abs((u0.x - x0) / (u1.x - x1) - 1.4) < 1e-9, 'autobahn speed');
   console.log(`nations ok: ${w.s.players.map((p, i) => `${p.nation} food ${Math.round(before[i] - p.res.food)}`).join(', ')}`);
+}
+
+// 8. Building upgrades and the air force.
+{
+  const two = () => ({ seed: 21, players: [{ name: 'A', color: '#f00', team: 0 }, { name: 'B', color: '#00f', team: 1 }], settings: { resources: 'insane', startAge: 3 } });
+  const w = new World(two()), w2 = new World(two());
+  const place = (w, p, type, near) => {
+    const c = near || w.s.blds.find((b) => b.owner === p && b.type === 'city');
+    for (let r = 3; r < 14; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (w.canPlace(p, type, c.x + dx, c.y + dy).ok) { const b = w.addBld(type, p, c.x + dx, c.y + dy, true); w.finishBld(b); return b; }
+    }
+    throw new Error('no room for ' + type);
+  };
+  const both = (fn) => [fn(w), fn(w2)];
+  const [farm] = both((x) => place(x, 0, 'farm'));
+  const [air] = both((x) => place(x, 0, 'airfield'));
+  const [ecity] = both((x) => x.s.blds.find((b) => b.owner === 1 && b.type === 'city'));
+  const [flak] = both((x) => place(x, 1, 'workshop'));
+  const go = (cmds, n = 1) => { for (let i = 0; i < n; i++) { const c = i === 0 ? cmds : []; w.step(c); w2.step(JSON.parse(JSON.stringify(c))); } };
+
+  // Upgrades: one level per age, more workers, faster gathering.
+  assert.equal(w.slots(farm), 5);
+  go([{ p: 0, c: 'upgrade', b: farm.id }, { p: 0, c: 'upgrade', b: farm.id }]);
+  assert.equal(farm.q.length, 1, 'only one upgrade at a time');
+  go([], 20 * 30);
+  assert.equal(farm.lvl, 1);
+  assert.equal(w.slots(farm), 6);
+  go([{ p: 0, c: 'upgrade', b: farm.id }], 20 * 30); go([{ p: 0, c: 'upgrade', b: farm.id }], 20 * 30);
+  go([{ p: 0, c: 'upgrade', b: farm.id }], 20 * 30);
+  assert.equal(farm.lvl, 3, 'capped at the current age');
+  assert.ok(Math.abs(w.lvlMul(farm) - 1.6) < 1e-9);
+
+  // Who can shoot planes.
+  assert.equal(w.stats(0, 'cavalry').aa, false, 'tanks cannot hit planes');
+  assert.equal(w.stats(0, 'infantry').aa, true, 'riflemen can');
+  assert.equal(w.stats(0, 'siege').aa, false);
+  assert.equal(w.stats(0, 'aagun').aaOnly, true);
+
+  // A bomber flies over, bombs the enemy city, and goes home to reload.
+  go([{ p: 0, c: 'train', b: air.id, type: 'bomber' }, { p: 0, c: 'train', b: air.id, type: 'fighter' }], 20 * 60);
+  const [bomber] = both((x) => x.s.units.find((u) => u.type === 'bomber'));
+  assert.ok(bomber && bomber.ammo === 1, 'bomber built and loaded');
+  // Clear the enemy's guns so the test is about bombing.
+  for (const x of [w, w2]) for (const u of x.s.units) if (u.owner === 1) u.hp = 0;
+  const hp0 = ecity.hp;
+  let bombs = 0;
+  go([{ p: 0, c: 'attack', ids: [bomber.id], t: ecity.id }]);
+  for (let i = 0; i < 20 * 120 && bombs < 2; i++) {
+    go([]);
+    for (const e of w.events.splice(0)) if (e.type === 'bomb') bombs++;
+  }
+  assert.ok(bombs >= 2, `bomber made two runs (${bombs})`);
+  assert.ok(ecity.hp < hp0, 'city damaged');
+
+  // Flak shoots down a fighter; a tank ignores planes; an attack order a unit can't do is ignored.
+  const [fighter] = both((x) => x.s.units.find((u) => u.type === 'fighter'));
+  const guns = both((x) => { const fl = x.s.blds.find((b) => b.id === flak.id); return x.addUnit('aagun', 1, fl.x + 4, fl.y + 1); });
+  const tanks = both((x) => { const fl = x.s.blds.find((b) => b.id === flak.id); return x.addUnit('cavalry', 1, fl.x + 4, fl.y + 2); });
+  go([{ p: 1, c: 'attack', ids: [tanks[0].id], t: fighter.id }]);
+  assert.equal(tanks[0].ord, null, 'tanks cannot be ordered to hit planes');
+  go([{ p: 0, c: 'move', ids: [fighter.id], x: guns[0].x, y: guns[0].y }]);
+  for (let i = 0; i < 20 * 60 && fighter.hp > 0; i++) go([]);
+  assert.ok(fighter.hp <= 0, 'flak shot the fighter down');
+  assert.equal(w.hash(), w2.hash(), 'air out of sync');
+  const r = new World(two(), JSON.parse(JSON.stringify(w.serialize())));
+  assert.equal(r.hash(), w.hash(), 'air save/load');
+  console.log(`air ok: farm level ${farm.lvl}, bomber runs ${bombs}, city hp ${Math.round(hp0)} -> ${Math.round(ecity.hp)}`);
 }
 
 console.log('ALL TESTS PASSED');

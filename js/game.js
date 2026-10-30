@@ -1,6 +1,6 @@
 // In-game user interface: mouse and keyboard input, the HUD, and alerts.
 import { Renderer } from './render.js';
-import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit, forNation, techCost, techTime } from './sim/data.js';
+import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit, forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime, GATHER_RATE, gatherMult } from './sim/data.js';
 import { NATIONS, nationOf } from './sim/nations.js';
 import { flagImg } from './flags.js';
 import { DT } from './sim/sim.js';
@@ -81,7 +81,16 @@ export class GameUI {
     const [wx, wy] = this.r.toWorld(sx, sy);
     const w = this.world;
     let best = null, bd = 1e9;
+    // Planes are drawn up in the sky, so click where they are drawn.
+    for (const [id, [px, py]] of this.r.planeAt) {
+      const u = w.get(id);
+      if (!u || u.hp <= 0) continue;
+      const dx = px - wx, dy = py - wy, d = dx * dx + dy * dy, rr = UNITS[u.type].radius * 1.6 + 0.2;
+      if (d < rr * rr && d < bd) { bd = d; best = u; }
+    }
+    if (best) return best;
     for (const u of this.s.units) {
+      if (UNITS[u.type].air) continue;
       if (!w.ally(this.me, u.owner) && !this.r.isVisible(u.x, u.y)) continue;
       const dx = u.x - wx, dy = u.y - wy, d = dx * dx + dy * dy;
       const rr = UNITS[u.type].radius + 0.25;
@@ -115,9 +124,21 @@ export class GameUI {
     on(window, 'mousemove', (e) => this.onMove(e));
     on(window, 'mouseup', (e) => this.onUp(e));
     on(cv, 'dblclick', (e) => this.onDbl(e));
-    on(cv, 'wheel', (e) => { e.preventDefault(); this.r.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
-    on(document, 'mouseleave', () => { this.mouse.inside = false; });
-    on(window, 'blur', () => { this.keys.clear(); this.mouse.inside = false; });
+    on(cv, 'wheel', (e) => this.onWheel(e), { passive: false });
+    // When the mouse leaves the window past an edge (e.g. up onto the browser tabs), keep scrolling that way
+    // until it comes back. This makes edge scrolling work in a normal browser window, not just fullscreen.
+    on(window, 'mouseout', (e) => {
+      if (e.relatedTarget) return; // still inside the page
+      const m = this.mouse, edge = 40;
+      m.out = null;
+      if (localStorage.getItem('ron-edge') !== '0' && m.inside && document.hasFocus()) {
+        const ox = m.x < edge ? -1 : m.x > this.r.vw - edge ? 1 : 0, oy = m.y < edge ? -1 : m.y > this.r.vh - edge ? 1 : 0;
+        if (ox || oy) m.out = [ox, oy];
+      }
+      m.inside = false;
+    });
+    on($('btn-full'), 'click', () => this.toggleFullscreen());
+    on(window, 'blur', () => { this.keys.clear(); this.mouse.inside = false; this.mouse.out = null; });
     on(window, 'keydown', (e) => this.onKey(e));
     on(window, 'keyup', (e) => this.keys.delete(e.key));
     const mm = $('minimap');
@@ -210,6 +231,7 @@ export class GameUI {
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     this.mouse.x = x; this.mouse.y = y;
     this.mouse.inside = true; // only edge-scroll after the mouse has really moved
+    this.mouse.out = null;
     if (this.mouse.pan) {
       const p = this.mouse.pan;
       this.r.cam.x = p.cx - (x - p.x) / this.r.cam.z;
@@ -238,7 +260,8 @@ export class GameUI {
     }
     const [ax, ay] = this.r.toWorld(Math.min(x, d.x), Math.min(y, d.y));
     const [bx, by] = this.r.toWorld(Math.max(x, d.x), Math.max(y, d.y));
-    const inBox = this.s.units.filter((u) => u.owner === this.me && u.x >= ax && u.x <= bx && u.y >= ay && u.y <= by);
+    const at = (u) => this.r.planeAt.get(u.id) || [u.x, u.y];
+    const inBox = this.s.units.filter((u) => { const [x, y] = at(u); return u.owner === this.me && x >= ax && x <= bx && y >= ay && y <= by; });
     if (!e.shiftKey) this.sel = new Set();
     for (const u of inBox) this.sel.add(u.id);
     if (inBox.length) { sfx.play('select'); this.speak(inBox.find((u) => u.type !== 'citizen') || inBox[0], 'select'); }
@@ -333,6 +356,7 @@ export class GameUI {
       return;
     }
     if (k === 'F10') { e.preventDefault(); this.toggleMenu(true); return; }
+    if (k === 'F9') { e.preventDefault(); this.toggleFullscreen(); return; }
     if (/^[0-9]$/.test(k)) {
       const n = +k;
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.groups.set(n, [...this.sel]); this.alert(`Group ${n} set`, 'info'); return; }
@@ -359,6 +383,29 @@ export class GameUI {
       const cities = this.s.blds.filter((b) => b.owner === this.me && b.type === 'city');
       if (cities.length) { const c = cities[this.homeIdx++ % cities.length]; this.r.centreOn(c.x + 1.5, c.y + 1.5); this.sel = new Set([c.id]); }
     }
+  }
+
+  toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else document.documentElement.requestFullscreen().catch(() => this.alert('This browser did not allow fullscreen. Try F11.', 'bad'));
+  }
+
+  // Mouse wheel: zoom, or scroll the map (setting). Trackpads send small sideways deltas too, so those pan.
+  onWheel(e) {
+    e.preventDefault();
+    const mode = localStorage.getItem('ron-wheel') || 'zoom';
+    const z = this.r.cam.z;
+    if (e.ctrlKey || (mode === 'zoom' && !e.shiftKey && Math.abs(e.deltaX) < 2)) {
+      // Pinch on a trackpad also arrives as ctrl+wheel with small steps.
+      const f = e.ctrlKey && Math.abs(e.deltaY) < 20 ? Math.exp(-e.deltaY * 0.02) : e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      this.r.zoomAt(e.offsetX, e.offsetY, f);
+      return;
+    }
+    const unit = e.deltaMode === 1 ? 30 : e.deltaMode === 2 ? this.r.vh : 1;
+    let dx = e.deltaX * unit, dy = e.deltaY * unit;
+    if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+    this.r.cam.x += (dx * 1.2) / z; this.r.cam.y += (dy * 1.2) / z;
+    this.r.clampCam();
   }
 
   nextIdle() {
@@ -479,12 +526,23 @@ export class GameUI {
           if (e.p === me || (e.x2 != null && this.isMineNear(e.x2, e.y2))) this.heat += 0.05;
           const nat = { bowler: 'bat', scooter: 'gun', jeepney: 'gun' }[e.ut] || (e.uq === 1 && e.ut === 'ranged' ? 'pop' : null);
           if (e.uq === 1 && e.ut === 'siege') sfx.at('jingle', e.x, e.y, 1);
+          if (e.cls === 'aa' || (e.ta && e.cls === 'bld' && e.age >= 3)) { sfx.at('flak', e.x, e.y, 0.9); break; }
+          if (e.cls === 'air') { sfx.at('mg', e.x, e.y, 0.8); break; }
           const snd = nat || (e.cls === 'cow' ? 'hit' : e.melee ? 'sword' : e.cls === 'bld' ? (e.age >= 2 ? 'gun' : 'tower')
             : e.cls === 'sie' ? (e.age >= 4 ? 'rocket' : e.age >= 2 ? 'cannon' : 'catapult')
               : e.cls === 'cav' && e.age >= 3 ? 'cannon' : e.cls === 'rng' && e.age >= 3 ? 'mg' : e.age >= 2 ? 'gun' : 'bow');
           sfx.at(snd, e.x, e.y, 0.9);
           break;
         }
+        case 'bomb':
+          if (seen) sfx.at('bombs', e.x, e.y, 1.1);
+          break;
+        case 'upgraded':
+          if (e.p === me) {
+            this.alert(`⬆️ ${UPGRADE[e.btype].names[e.lvl]} ready: +${Math.round(UPGRADE.rate * 100)}% speed, room for one more worker`, 'good');
+            sfx.play('tech');
+          }
+          break;
         case 'attacked':
           if (e.p === me) {
             this.heat += 0.08;
@@ -685,6 +743,8 @@ export class GameUI {
       const m = this.mouse, edge = 8;
       if (m.x < edge) dx -= sp; if (m.x > this.r.vw - edge) dx += sp;
       if (m.y < edge) dy -= sp; if (m.y > this.r.vh - edge) dy += sp;
+    } else if (this.mouse.out && !this.mouse.inside && document.hasFocus()) {
+      dx += this.mouse.out[0] * sp; dy += this.mouse.out[1] * sp;
     }
     if (dx || dy) { this.r.cam.x += dx; this.r.cam.y += dy; this.r.clampCam(); }
     setListener(...this.r.viewCentre());
@@ -742,6 +802,15 @@ export class GameUI {
       if (mus.length) {
         const u = mus[Math.floor(Math.random() * mus.length)];
         sfx.at(u.type === 'jeepney' ? 'disco' : s.players[u.owner].age >= 4 ? 'techno' : 'oompah', u.x, u.y, 0.9);
+      }
+    }
+    // Planes on screen drone past now and then.
+    if (now > (this.nextPlane || 0)) {
+      this.nextPlane = now + 2500 + Math.random() * 3000;
+      const planes = s.units.filter((u) => UNITS[u.type].air && this.r.onScreen(u.x, u.y, 0) && (u.owner === this.me || this.r.isVisible(u.x, u.y)));
+      if (planes.length) {
+        const u = planes[Math.floor(Math.random() * planes.length)];
+        sfx.at(s.players[u.owner].age >= 4 ? 'jet' : 'prop', u.x, u.y, Math.min(1, 0.5 + planes.length * 0.05));
       }
     }
     const ph = this.r.dayPhase();
@@ -813,15 +882,23 @@ export class GameUI {
     this.updateCard();
   }
 
+  // Building name for the owner's age. Gather buildings are named by their upgrade level instead.
+  bldName(b) {
+    const up = UPGRADE[b.type];
+    if (up) return up.names[b.lvl || 0];
+    return BLDS[b.type].names[this.s.players[b.owner].age];
+  }
+
   orderText(u) {
     const o = u.ord;
     if (!o) return 'Idle';
     if (o.k === 'move') return o.am ? 'Attack-moving' : 'Moving';
     if (o.k === 'attack') return 'Attacking';
+    if (o.k === 'rearm') return 'Flying home to reload';
     if (o.k === 'work') {
       const b = this.world.get(o.t);
       if (!b) return 'Working';
-      const n = BLDS[b.type].names[this.s.players[b.owner].age];
+      const n = this.bldName(b);
       if (!b.done) return `Building ${n}`;
       if (BLDS[b.type].gather) return u.working ? `Gathering ${BLDS[b.type].gather} at ${n}` : `Going to ${n}`;
       return `Repairing ${n}`;
@@ -856,23 +933,26 @@ export class GameUI {
           <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${flagImg(owner.nation, 11)} ${esc(owner.name)} · <i>${esc(unitName(e, owner.nation))}</i></div>
           <div class="hpbar"><div style="width:${(100 * e.hp) / max}%"></div></div>
           <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(max)} · Attack ${(st.atk * mul).toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · Speed ${st.speed.toFixed(1)}${e.kills ? ` · Kills ${e.kills}` : ''}</div>
-          ${st.uniq ? `<div class="stats uniq">${esc(st.desc)}</div>` : ''}
+          ${st.uniq ? `<div class="stats uniq">${esc(st.desc)}</div>` : UNITS[e.type].desc && (st.air || st.aaOnly) ? `<div class="stats">${esc(UNITS[e.type].desc)}</div>` : ''}
+          ${st.bomb ? `<div class="stats">Bombs: ${e.ammo ? 'loaded' : 'reloading'}</div>` : ''}
           <div class="stats">${e.owner === this.me ? this.orderText(e) : ''}</div>`;
       } else {
         const d = BLDS[e.type];
-        const name = e.type === 'city' && e.name ? `${d.names[owner.age]}: ${e.name}` : d.names[owner.age];
+        const name = e.type === 'city' && e.name ? `${d.names[owner.age]}: ${e.name}` : this.bldName(e);
         let extra = '';
         if (!e.done) extra += `<div class="stats">Under construction: ${Math.floor((100 * e.prog) / d.time)}% — right-click with citizens to help</div>`;
         if (d.gather && e.done) {
           const n = (w.workerCount && w.workerCount.get(e.id)) || 0;
-          extra += `<div class="stats">Workers ${n}/${d.slots} · makes ${RES_ICON[d.gather]} ${d.gather}</div>`;
+          const per = GATHER_RATE[d.gather] * gatherMult(owner, d.gather) * w.lvlMul(e);
+          extra += `<div class="stats">Workers ${n}/${w.slots(e)} · ${RES_ICON[d.gather]} ${(per * 60).toFixed(0)} ${d.gather} per worker per minute</div>`;
+          extra += `<div class="stats">Level ${e.lvl || 0}${e.lvl ? ` (+${Math.round(UPGRADE.rate * 100 * e.lvl)}% speed, +${UPGRADE.slots * e.lvl} workers)` : ''}${(e.lvl || 0) < AGES.length - 1 ? ` · ${(e.lvl || 0) < owner.age ? 'can be upgraded now' : `next upgrade in the ${AGES[(e.lvl || 0) + 1]} Age`}` : ' · fully upgraded'}</div>`;
         }
         if (e.type === 'city') extra += `<div class="stats">Territory radius ${8 + owner.age} · Pop +${d.pop}</div>`;
         if (e.type === 'silo') extra += `<div class="stats">Nukes ready: ${e.stock}/${NUKE.maxStock}</div>`;
         if (e.owner === this.me && e.q.length) {
           extra += '<div class="queue">' + e.q.map((it, i) => {
-            const icon = it.k === 'unit' ? UNITS[it.type].icon : it.k === 'age' ? '⏫' : it.k === 'nuke' ? '☢️' : '📜';
-            const title = it.k === 'unit' ? w.stats(this.me, it.type).name : it.k === 'age' ? `${AGES[this.pl.age + 1]} Age` : it.k === 'nuke' ? 'Nuke' : TECHS[it.type].name;
+            const icon = it.k === 'unit' ? UNITS[it.type].icon : it.k === 'age' ? '⏫' : it.k === 'nuke' ? '☢️' : it.k === 'upg' ? '⬆️' : '📜';
+            const title = it.k === 'unit' ? w.stats(this.me, it.type).name : it.k === 'age' ? `${AGES[this.pl.age + 1]} Age` : it.k === 'nuke' ? 'Nuke' : it.k === 'upg' ? `Upgrade to ${UPGRADE[e.type].names[(e.lvl || 0) + 1]}` : TECHS[it.type].name;
             const pct = i === 0 ? 100 * (1 - it.t / it.total) : 0;
             return `<div class="qitem ${it.blocked ? 'blocked' : ''}" data-b="${e.id}" data-i="${i}" title="${esc(title)}${it.blocked ? ' — population cap reached! Build more cities or research Civics.' : ''} (click to cancel)">${icon}<div class="bar" style="width:${pct}%"></div></div>`;
           }).join('') + '</div>';
@@ -965,10 +1045,13 @@ export class GameUI {
       });
     }
     if (d.research) {
-      for (const tk of TECH_ORDER) {
+      // National tech first. For chains (Agriculture -> Irrigation -> Fertiliser) only show the next step.
+      const order = TECH_ORDER.filter((tk) => TECHS[tk].nation).concat(TECH_ORDER.filter((tk) => !TECHS[tk].nation));
+      for (const tk of order) {
         const t = TECHS[tk];
         if (pl.techs[tk] || !forNation(pl, t)) continue;
         if (t.age > pl.age + 1) continue;
+        if (t.req && !pl.techs[t.req] && !pl.pending[t.req]) continue;
         let need = '';
         if (pl.pending[tk]) need = 'Researching…';
         else if (pl.age < t.age) need = `Needs the ${AGES[t.age]} Age`;
@@ -992,6 +1075,22 @@ export class GameUI {
         desc: 'Pick a target anywhere on the map. Everyone will see it coming.',
         active: this.mode && this.mode.what === 'nuke',
         fn: () => { const r = done.find((x) => x.stock > 0); if (r) this.mode = { k: 'target', what: 'nuke', b: r.id }; },
+      });
+    }
+    if (UPGRADE[type]) {
+      // Upgrade the least upgraded one first.
+      const cands = () => done.filter((b) => !b.q.some((it) => it.k === 'upg')).sort((a, b) => (a.lvl || 0) - (b.lvl || 0) || a.id - b.id);
+      const cand = cands();
+      const b = cand[0] || done[0], lvl = (b.lvl || 0) + 1, up = UPGRADE[type];
+      let need = '';
+      if (lvl >= up.names.length) need = 'Fully upgraded';
+      else if (!cand.length) need = 'Already upgrading';
+      else if (lvl > pl.age) need = `Next upgrade in the ${AGES[lvl]} Age`;
+      const name = up.names[Math.min(lvl, up.names.length - 1)];
+      list.push({
+        key: 'U', icon: '⬆️', label: `Upgrade: ${name}`, cost: lvl < up.names.length ? upgradeCost(type, lvl) : null, need,
+        desc: `Each upgrade gives +${Math.round(UPGRADE.rate * 100)}% gathering speed and room for ${UPGRADE.slots} more worker. One upgrade per age. Takes ${upgradeTime(lvl)}s.${done.length > 1 ? ' With several selected, it upgrades the lowest one first.' : ''}`,
+        fn: () => { const c = cands()[0]; if (c) this.send({ c: 'upgrade', b: c.id }); },
       });
     }
     if (done.some((b) => b.q.length)) {

@@ -109,7 +109,7 @@ export function updateExtras(w) {
         let bd = MUTANT.sight * MUTANT.sight;
         w.unitsNear(c.x, c.y, MUTANT.sight, (u) => {
           const dx = u.x - c.x, dy = u.y - c.y, d = dx * dx + dy * dy;
-          if (u.hp > 0 && d < bd) { bd = d; t = u; }
+          if (u.hp > 0 && d < bd && !UNITS[u.type].air) { bd = d; t = u; }
         });
       }
       c.tgt = t ? t.id : 0;

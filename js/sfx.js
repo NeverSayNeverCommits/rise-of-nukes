@@ -179,18 +179,43 @@ const S = {
       tone(f, d, { type: 'sawtooth', vol: 0.22, lp: 1100, q: 3, when: w, attack: 0.05, hold: d * 0.6, vib: i === 3 ? [6, 9] : [4, 2] }));
   },
   moo: (o = { v: 1 }) => {
+    // "Mmm-OOOO-oh". A buzzy voice goes through two formant filters that open up like a mouth,
+    // so it starts humming ("mm") and opens into "oo". Pitch rises a bit, then sags at the end.
     const a = ctx(); if (!a) return;
-    const t = a.currentTime, base = rnd(105, 140), dur = rnd(0.9, 1.4);
-    const osc = a.createOscillator(), g = a.createGain(), f = a.createBiquadFilter();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(base * 0.92, t);
-    osc.frequency.linearRampToValueAtTime(base * 1.08, t + dur * 0.3);
-    osc.frequency.linearRampToValueAtTime(base * 0.85, t + dur);
-    f.type = 'lowpass'; f.Q.value = 6;
-    f.frequency.setValueAtTime(250, t); f.frequency.linearRampToValueAtTime(950, t + dur * 0.35); f.frequency.linearRampToValueAtTime(350, t + dur);
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5 * o.v, t + 0.12);
-    g.gain.setValueAtTime(0.5 * o.v, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(f).connect(g).connect(out(o.pan)); osc.start(t); osc.stop(t + dur + 0.05);
+    const t = a.currentTime, base = rnd(175, 230), dur = rnd(1.0, 1.5), v = o.v ?? 1;
+    const osc = a.createOscillator(), osc2 = a.createOscillator();
+    osc.type = 'sawtooth'; osc2.type = 'triangle';
+    for (const [x, m] of [[osc, 1], [osc2, 0.5]]) {
+      x.frequency.setValueAtTime(base * 0.86 * m, t);
+      x.frequency.linearRampToValueAtTime(base * 1.04 * m, t + dur * 0.3);
+      x.frequency.linearRampToValueAtTime(base * 0.97 * m, t + dur * 0.7);
+      x.frequency.linearRampToValueAtTime(base * 0.78 * m, t + dur);
+    }
+    // a little vibrato once the moo gets going
+    const lfo = a.createOscillator(), lg = a.createGain();
+    lfo.frequency.value = 5.5; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(base * 0.018, t + dur * 0.5);
+    lfo.connect(lg); lg.connect(osc.frequency);
+    const mix = a.createGain(); mix.gain.value = 1;
+    const g2 = a.createGain(); g2.gain.value = 0.6;
+    osc.connect(mix); osc2.connect(g2).connect(mix);
+    const g = a.createGain();
+    // formants: closed "m" (low) opening to "oo/aw"
+    const f1 = a.createBiquadFilter(), f2 = a.createBiquadFilter(), body = a.createBiquadFilter();
+    f1.type = 'bandpass'; f1.Q.value = 5; f2.type = 'bandpass'; f2.Q.value = 7; body.type = 'lowpass'; body.Q.value = 1;
+    f1.frequency.setValueAtTime(300, t); f1.frequency.linearRampToValueAtTime(320, t + 0.18); f1.frequency.linearRampToValueAtTime(720, t + dur * 0.4); f1.frequency.linearRampToValueAtTime(480, t + dur);
+    f2.frequency.setValueAtTime(700, t); f2.frequency.linearRampToValueAtTime(1150, t + dur * 0.4); f2.frequency.linearRampToValueAtTime(850, t + dur);
+    body.frequency.setValueAtTime(350, t); body.frequency.linearRampToValueAtTime(1300, t + dur * 0.4); body.frequency.linearRampToValueAtTime(600, t + dur);
+    const gf1 = a.createGain(), gf2 = a.createGain(), gb = a.createGain();
+    gf1.gain.value = 1.4; gf2.gain.value = 0.7; gb.gain.value = 0.35;
+    mix.connect(f1).connect(gf1).connect(g); mix.connect(f2).connect(gf2).connect(g); mix.connect(body).connect(gb).connect(g);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.25 * v, t + 0.06);   // "mm"
+    g.gain.exponentialRampToValueAtTime(0.6 * v, t + dur * 0.35); // "OO"
+    g.gain.setValueAtTime(0.6 * v, t + dur * 0.65);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    g.connect(out(o.pan));
+    for (const x of [osc, osc2, lfo]) { x.start(t); x.stop(t + dur + 0.05); }
+    noise(dur * 0.8, { type: 'bandpass', freq: 900, q: 1, vol: 0.03 * v, when: 0.1, attack: 0.2, pan: o.pan }); // breath
   },
   mutant: (o = { v: 1 }) => {
     tone(70, 1.4, { type: 'sawtooth', vol: 0.35 * o.v, lp: 700, q: 8, vib: [11, 18], slide: 45, pan: o.pan, attack: 0.05 });
@@ -218,15 +243,83 @@ const S = {
       else { tone(root * 2.5, 0.15, { type: 'square', vol: 0.06 * o.v, lp: 1600, when: i * 0.3, pan: o.pan }); noise(0.12, { type: 'highpass', freq: 6000, vol: 0.12 * o.v, when: i * 0.3, pan: o.pan }); }
     }
   },
-  techno: (o = { v: 1 }) => { for (let i = 0; i < 4; i++) { tone(55, 0.18, { vol: 0.5 * o.v, slide: 40, when: i * 0.25, pan: o.pan }); noise(0.05, { type: 'highpass', freq: 7000, vol: 0.12 * o.v, when: i * 0.25 + 0.125, pan: o.pan }); } },
+  techno: (o = { v: 1 }) => {
+    // Two bars of 128 BPM techno: four-on-the-floor kick, offbeat hats, claps and a squelchy acid bass.
+    const v = o.v ?? 1, st = 60 / 128 / 4, pan = o.pan;
+    const root = [45, 43, 41, 48][Math.floor(Math.random() * 4)];
+    const BASS = [0, 0, 12, 0, 0, 3, 0, 15, 0, 0, 12, 7, 0, 10, 0, 12]; // semitones over the root
+    const REST = [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+    for (let i = 0; i < 32; i++) {
+      const w = i * st, s16 = i % 16;
+      if (i % 4 === 0) kick(w, v, pan);
+      if (i % 4 === 2) noise(0.11, { type: 'highpass', freq: 7500, vol: 0.2 * v, when: w, pan });
+      else noise(0.03, { type: 'highpass', freq: 9000, vol: 0.06 * v, when: w, pan });
+      if (i % 8 === 4) clap(w, v, pan);
+      if (!REST[s16]) acid(NOTE(root + BASS[s16]), st * 0.9, w, v * (s16 % 4 === 3 ? 1.3 : 1), i / 32, pan);
+    }
+    // a minor-chord stab on the last offbeat
+    for (const n of [0, 3, 7]) tone(NOTE(root + 24 + n), 0.25, { type: 'sawtooth', vol: 0.05 * v, lp: 2200, q: 4, when: 30 * st, pan });
+  },
   disco: (o = { v: 1 }) => { [523, 659, 784, 659].forEach((f, i) => tone(f, 0.14, { type: 'square', vol: 0.06 * o.v, lp: 2500, when: i * 0.14, pan: o.pan })); },
+  // Air force.
+  prop: (o = { v: 1 }) => { // propeller plane droning past
+    const v = o.v ?? 1;
+    tone(rnd(85, 100), 2.2, { type: 'sawtooth', vol: 0.12 * v, lp: 420, q: 2, attack: 0.6, vib: [24, 6], slide: 70, pan: o.pan });
+    noise(2.2, { freq: 500, vol: 0.12 * v, attack: 0.6, pan: o.pan });
+  },
+  jet: (o = { v: 1 }) => { // jet roaring overhead
+    const v = o.v ?? 1;
+    noise(2.4, { type: 'bandpass', freq: 700, slide: 2600, q: 1.2, vol: 0.35 * v, attack: 0.8, pan: o.pan });
+    noise(2.6, { freq: 300, vol: 0.25 * v, attack: 0.9, pan: o.pan });
+    tone(rnd(1800, 2200), 2.2, { vol: 0.02 * v, slide: 1200, attack: 0.8, pan: o.pan });
+  },
+  flak: (o = { v: 1 }) => { // thump on the ground, crack up in the sky
+    const v = o.v ?? 1;
+    tone(120, 0.18, { vol: 0.45 * v, slide: 45, pan: o.pan });
+    noise(0.1, { freq: 900, vol: 0.4 * v, pan: o.pan });
+    noise(0.35, { freq: 2200, slide: 300, vol: 0.35 * v, when: 0.22, pan: o.pan });
+  },
+  bombs: (o = { v: 1 }) => { // falling whistle, then a string of explosions
+    const v = o.v ?? 1;
+    tone(1700, 0.55, { vol: 0.08 * v, slide: 450, attack: 0.05, pan: o.pan });
+    for (let i = 0; i < 5; i++) {
+      const w = 0.45 + i * 0.09 + Math.random() * 0.05;
+      noise(0.7, { freq: 1100, slide: 90, vol: 0.55 * v, when: w, pan: o.pan });
+      tone(rnd(55, 75), 0.5, { vol: 0.45 * v, slide: 30, when: w, pan: o.pan });
+    }
+  },
   boing: () => tone(200, 0.4, { type: 'sine', vol: 0.3, slide: 900, vib: [18, 60] }),
   fireworks: () => { for (let i = 0; i < 6; i++) { const w = i * 0.35 + Math.random() * 0.2; tone(rnd(800, 1400), 0.6, { vol: 0.05, slide: 3000, when: w }); noise(0.5, { freq: 2500, vol: 0.35, when: w + 0.6 }); } },
 };
 
+// Techno drum kit and bass.
+function kick(when, v, pan) {
+  tone(150, 0.32, { vol: 0.85 * v, slide: 42, slideT: 0.11, when, pan });
+  noise(0.012, { type: 'highpass', freq: 3000, vol: 0.25 * v, when, pan });
+}
+function clap(when, v, pan) {
+  for (let i = 0; i < 3; i++) noise(0.025, { type: 'bandpass', freq: 1400, q: 1.5, vol: 0.32 * v, when: when + i * 0.011, pan });
+  noise(0.16, { type: 'bandpass', freq: 1200, q: 1.2, vol: 0.22 * v, when: when + 0.033, pan });
+}
+// One acid bass note: a sawtooth through a resonant low-pass that snaps open and shut.
+// 'sweep' (0..1) slowly opens the filter over the phrase, like turning the cutoff knob.
+function acid(freq, dur, when, v, sweep, pan) {
+  const a = ctx(); if (!a) return;
+  const t = a.currentTime + when;
+  const osc = a.createOscillator(), f = a.createBiquadFilter(), g = a.createGain();
+  osc.type = 'sawtooth'; osc.frequency.setValueAtTime(freq, t);
+  f.type = 'lowpass'; f.Q.value = 14;
+  const top = 600 + sweep * 2200;
+  f.frequency.setValueAtTime(180, t); f.frequency.exponentialRampToValueAtTime(top, t + 0.015); f.frequency.exponentialRampToValueAtTime(220, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16 * v, t + 0.004);
+  g.gain.setValueAtTime(0.16 * v, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(f).connect(g).connect(out(pan));
+  osc.start(t); osc.stop(t + dur + 0.05);
+}
+
 // Stop the same sound piling up when 50 archers shoot at once.
 const lastPlay = new Map();
-const GAP = { bat: 90, pop: 80, jingle: 200, horn: 900, oompah: 1300, techno: 1100, disco: 800, sword: 70, bow: 60, gun: 45, mg: 120, cannon: 160, catapult: 150, rocket: 160, tower: 90, hit: 40, grunt: 90, scream: 4000, moo: 600, explode: 120, collapse: 300, ribbit: 150, mutant: 1500 };
+const GAP = { prop: 1800, jet: 2000, flak: 70, bombs: 250, bat: 90, pop: 80, jingle: 200, horn: 900, oompah: 1300, techno: 3800, disco: 800, sword: 70, bow: 60, gun: 45, mg: 120, cannon: 160, catapult: 150, rocket: 160, tower: 90, hit: 40, grunt: 90, scream: 4000, moo: 600, explode: 120, collapse: 300, ribbit: 150, mutant: 1500 };
 
 function play(name, o) {
   if (cfg.muted || !S[name]) return;

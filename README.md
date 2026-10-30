@@ -17,14 +17,17 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 
 | | |
 |---|---|
-| **Gather** | Citizens build farms (near a city), woodcutter's camps (next to forest), mines (on grey metal rocks) and, from the Industrial Age, oil wells (on black oil pools). Right-click a building with citizens to work there. 5 workers per building. |
+| **Gather** | Citizens build farms (near a city), woodcutter's camps (next to forest), mines (on grey metal rocks) and, from the Industrial Age, oil wells (on black oil pools). Right-click a building with citizens to work there. 5 workers per building to start with. |
+| **Upgrades** | Select a farm, camp, mine or oil well and press **⬆️ Upgrade** (U). Each upgrade gives +20% gathering speed and room for 1 more worker. You get one upgrade per age, up to level 4 in the Atomic Age (+80%, 9 workers). A gold badge shows the level. This is the main way to get more out of your limited metal and oil spots. |
 | **Ages** | Ancient → Classical → Gunpowder → Industrial → Atomic. Advance at a city. Units upgrade automatically: spearmen become riflemen, horsemen become tanks, catapults become rocket artillery. |
-| **Tech** | The Library researches better gathering, Civics (more population and cities), attack and armour upgrades, and the Manhattan Project. |
+| **Tech** | The Library researches better gathering, Civics (more population and cities), attack and armour upgrades, and the Manhattan Project. Each resource has three gathering techs, and the later ones are bigger: Fertiliser, Chainsaws, Cracking Towers (Industrial), Strip Mining and Fracking (Atomic). The Library only shows the next tech in each chain. |
 | **Territory** | Cities claim land. You can only build inside your borders. Enemy territory slowly damages your units. More cities = more land. City limit goes up with each age. |
 | **Army** | Infantry beats cavalry, ranged beats infantry, cavalry beats ranged and siege, siege wrecks buildings. Towers and cities shoot back. |
+| **Air force** | From the Industrial Age, build an **Airfield** (P). **Fighters** (F) hunt enemy planes and can shoot at ground units. **Bombers** (B) fly to a target, drop a big load of bombs (great against buildings), then fly back to the nearest airfield or city to reload, and go again. Planes fly over forests, water and mountains. In the Atomic Age they become jet fighters and stealth bombers. |
+| **Anti-air** | The Arms Factory (the old Siege Workshop) builds **Flak Cannons** (Q), which only shoot planes and are very good at it. Riflemen and other gun-armed foot soldiers (Gunpowder Age and later), towers, cities and fighters can also hit planes. Tanks, cavalry, siege and citizens can't. Towers become Flak Bunkers in the Industrial Age. |
 | **Conquest** | Bring a city to 0 HP with soldiers nearby to capture it. Lose all your cities and you're out. Last team standing wins. |
 | **Nukes** | Atomic Age → research **Manhattan Project** at a Library → build a **Missile Silo** → build a nuke → **Launch** and click a target anywhere. Everyone gets a warning and a countdown. Missile Defense gives a 50% chance to shoot down nukes aimed at your land. |
-| **Doomsday Clock** | Every nuke moves the clock. When it reaches the limit set in the lobby, everybody loses. |
+| **Doomsday Clock** | Every nuke moves the clock. When it reaches the limit set in the lobby, everybody loses. As it gets close, the sky turns red and ash starts to fall. |
 | **Veterans** | Units that get kills earn ranks (★ at 3 kills, ★★ at 7, ★★★ at 15). Each rank gives +15% attack and HP. |
 | **Day and night** | A full day lasts 6 minutes. At night, windows light up. You can turn this off in the settings. |
 
@@ -54,7 +57,9 @@ This is on by default. The host can switch it off in the lobby ("Silly stuff: Of
 
 ### Sound and display
 
-Click **⚙️ Sound & display** on the main menu, or 🔊 in the game, to change the volume, the music, the spoken voices, and the day/night cycle. The settings are saved in your browser. The music is made on the fly and gets more intense when fighting starts.
+Click **⚙️ Sound & display** on the main menu, or 🔊 in the game, to change the volume, the music, the spoken voices, the day/night cycle and how the mouse scrolls the map. The settings are saved in your browser. The music is made on the fly and gets more intense when fighting starts.
+
+**Scrolling in a browser window.** In a normal (not fullscreen) browser window you can't push the mouse past the top of the page, because the tabs are in the way. So by default, if the mouse leaves the window past an edge, the map keeps scrolling that way until the mouse comes back. You can turn this off in the settings. Fullscreen (⛶ or F9) also fixes it.
 
 ### Controls
 
@@ -64,7 +69,8 @@ Click **⚙️ Sound & display** on the main menu, or 🔊 in the game, to chang
 | Double-click | Select all of that type on screen |
 | Right-click | Move, attack, work, or set a rally point for buildings |
 | Arrow keys, screen edge, middle-drag, minimap | Scroll |
-| Mouse wheel | Zoom |
+| Mouse wheel | Zoom. Or scroll the map: pick *Mouse wheel: Scrolls the map* in ⚙️ settings (then Shift+wheel = sideways, Ctrl+wheel = zoom). Trackpads can pan with two fingers. |
+| ⛶ or F9 | Fullscreen. Then screen-edge scrolling works on all four sides. |
 | Letters shown on buttons | Build, train or research (Shift+click a train button = 5 units) |
 | A / S | Attack-move / Stop |
 | H | Jump to your cities |
@@ -100,6 +106,7 @@ There is no build step. The files are served as they are.
 - **The host must keep their tab open.** If the host leaves, the game ends. A background tab is fine.
 - Some strict networks (some office, school or mobile networks) block direct connections. If one player can't join, try a different person as host. If it keeps happening, a TURN relay server can be added in `js/net.js` (`iceServers`).
 - Up to 8 players. It's built and tested with 4 in mind.
+- Performance: the game was tested with 800 units on the map, including 200 planes. The simulation takes about 2.5 ms of the 50 ms it has per turn. Drawing a plane costs about as much as drawing two foot soldiers, so big air forces are fine on any normal laptop.
 - Anyone could cheat from the browser console. It's a game for friends.
 
 ## Develop
@@ -136,7 +143,7 @@ Any static file server works. Opening `index.html` straight from disk won't work
 ## Ideas for next steps
 
 - AI opponents, so the group can play against bots together
-- Aircraft (fighters and bombers), and ships
+- Ships
 - Shift-queued orders, formations
 - Wonders and more nations with bonuses
 - More silly events (suggestions welcome)

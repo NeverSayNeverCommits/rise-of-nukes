@@ -26,14 +26,19 @@ export const ATTRITION = 0.01;    // share of max hp lost per second in enemy la
 export const FALLOUT_DMG = 0.04;  // share of max hp lost per second in fallout
 
 // Damage multipliers: MULT[attackerClass][targetClass]
-// cit = citizen, inf = infantry, rng = ranged, cav = cavalry/armour, sie = siege, bld = building
+// cit = citizen, inf = infantry, rng = ranged, cav = cavalry/armour, sie = siege, bld = building,
+// air = planes, aa = anti-air guns, bomb = bombs dropped by bombers.
+// A 0 in the air column means that class can't shoot at planes at all.
 export const MULT = {
-  cit: { cit: 1, inf: 1, rng: 1, cav: 1, sie: 1, bld: 0.3 },
-  inf: { cit: 1.5, inf: 1, rng: 1, cav: 2, sie: 1.5, bld: 0.6 },
-  rng: { cit: 1.5, inf: 1.5, rng: 1, cav: 0.7, sie: 1, bld: 0.25 },
-  cav: { cit: 2, inf: 0.8, rng: 1.75, cav: 1, sie: 2, bld: 0.4 },
-  sie: { cit: 0.8, inf: 0.8, rng: 0.8, cav: 0.5, sie: 1, bld: 4 },
-  bld: { cit: 1, inf: 1, rng: 1, cav: 0.8, sie: 1.2, bld: 0 },
+  cit: { cit: 1, inf: 1, rng: 1, cav: 1, sie: 1, bld: 0.3, air: 0, aa: 1 },
+  inf: { cit: 1.5, inf: 1, rng: 1, cav: 2, sie: 1.5, bld: 0.6, air: 0.35, aa: 1.5 },
+  rng: { cit: 1.5, inf: 1.5, rng: 1, cav: 0.7, sie: 1, bld: 0.25, air: 0.9, aa: 1.5 },
+  cav: { cit: 2, inf: 0.8, rng: 1.75, cav: 1, sie: 2, bld: 0.4, air: 0, aa: 2 },
+  sie: { cit: 0.8, inf: 0.8, rng: 0.8, cav: 0.5, sie: 1, bld: 4, air: 0, aa: 1.5 },
+  bld: { cit: 1, inf: 1, rng: 1, cav: 0.8, sie: 1.2, bld: 0, air: 1.2, aa: 1 },
+  air: { cit: 1.2, inf: 0.8, rng: 0.8, cav: 0.5, sie: 1, bld: 0.3, air: 2, aa: 0.8 },
+  aa: { cit: 0.3, inf: 0.3, rng: 0.3, cav: 0.2, sie: 0.3, bld: 0.1, air: 2.5, aa: 0.3 },
+  bomb: { cit: 1.2, inf: 1, rng: 1, cav: 0.8, sie: 1.2, bld: 3, air: 0, aa: 1 },
 };
 
 // Unit "lines". A line upgrades automatically when its owner reaches a new age.
@@ -88,6 +93,34 @@ export const UNITS = {
     time: [20, 20, 22, 24, 26],
     desc: 'Long range. Wrecks buildings and hits groups. Weak up close.',
   },
+  // ----- Industrial and Atomic Age air force and anti-air -----
+  fighter: {
+    cls: 'air', from: 'airfield', key: 'F', age: 3, icon: '✈️', air: true,
+    names: ['Fighter', 'Fighter', 'Fighter', 'Fighter Plane', 'Jet Fighter'],
+    hp: [200, 200, 200, 200, 240], atk: [12, 12, 12, 12, 16], range: [3.5, 3.5, 3.5, 3.5, 4],
+    cd: [1, 1, 1, 1, 0.8], speed: [6.5, 6.5, 6.5, 6.5, 8.5], sight: 10, radius: 0.45,
+    cost: [{ metal: 120, oil: 80 }, { metal: 120, oil: 80 }, { metal: 120, oil: 80 }, { metal: 120, oil: 80 }, { metal: 140, oil: 100 }],
+    time: [22, 22, 22, 22, 22],
+    desc: 'Fast plane. Hunts enemy planes and can strafe ground units. Flies over anything.',
+  },
+  bomber: {
+    cls: 'air', from: 'airfield', key: 'B', age: 3, icon: '🛩️', air: true, bomb: true, rearm: 10,
+    names: ['Bomber', 'Bomber', 'Bomber', 'Bomber', 'Stealth Bomber'],
+    hp: [360, 360, 360, 360, 420], atk: [140, 140, 140, 140, 190], range: [0.6, 0.6, 0.6, 0.6, 0.6],
+    cd: [1, 1, 1, 1, 1], speed: [5, 5, 5, 5, 6.5], sight: 9, radius: 0.55, splash: 2.2,
+    cost: [{ metal: 220, oil: 160 }, { metal: 220, oil: 160 }, { metal: 220, oil: 160 }, { metal: 220, oil: 160 }, { metal: 260, oil: 200 }],
+    time: [30, 30, 30, 30, 30],
+    desc: 'Flies to the target, drops a load of bombs, then flies home to an Airfield or city to reload. Wrecks buildings.',
+  },
+  aagun: {
+    cls: 'aa', from: 'workshop', key: 'Q', age: 3, icon: '🎯', aaOnly: true,
+    names: ['Flak Cannon', 'Flak Cannon', 'Flak Cannon', 'Flak Cannon', 'SAM Launcher'],
+    hp: [160, 160, 160, 160, 190], atk: [22, 22, 22, 22, 30], range: [7, 7, 7, 7, 8.5],
+    cd: [1.2, 1.2, 1.2, 1.2, 1.5], speed: [2, 2, 2, 2, 2.4], sight: 10, radius: 0.38,
+    cost: [{ metal: 100, oil: 30 }, { metal: 100, oil: 30 }, { metal: 100, oil: 30 }, { metal: 100, oil: 30 }, { metal: 120, oil: 50 }],
+    time: [20, 20, 20, 20, 20],
+    desc: 'Anti-air. Shreds planes. Only shoots at planes.',
+  },
 };
 
 // Building footprints are square: size x size tiles.
@@ -131,7 +164,7 @@ export const BLDS = {
   },
   workshop: {
     size: 2, hp: 900, cost: { wood: 150, metal: 80 }, time: 30, key: 'W', icon: '⚙️', age: 1, sight: 5,
-    names: ['Siege Workshop', 'Siege Workshop', 'Foundry', 'Arms Factory', 'Arms Factory'], trains: ['siege'],
+    names: ['Siege Workshop', 'Siege Workshop', 'Foundry', 'Arms Factory', 'Arms Factory'], trains: ['siege', 'aagun'],
     desc: 'Builds siege weapons and artillery.',
   },
   library: {
@@ -141,8 +174,13 @@ export const BLDS = {
   },
   tower: {
     size: 1, hp: 700, cost: { wood: 80, metal: 60 }, time: 20, key: 'R', icon: '🗼', age: 1, sight: 9,
-    names: ['Tower', 'Tower', 'Fort Tower', 'Bunker', 'Bunker'], atk: 12, range: 7, cd: 1.5,
-    desc: 'Shoots at enemies nearby.',
+    names: ['Tower', 'Tower', 'Fort Tower', 'Flak Bunker', 'Flak Bunker'], atk: 12, range: 7, cd: 1.5,
+    desc: 'Shoots at enemies nearby, including planes.',
+  },
+  airfield: {
+    size: 3, hp: 1600, cost: { wood: 250, metal: 250 }, time: 40, key: 'P', icon: '🛫', age: 3, sight: 6,
+    names: ['Airfield', 'Airfield', 'Airfield', 'Airfield', 'Air Base'], trains: ['fighter', 'bomber'],
+    desc: 'Builds fighters and bombers. Bombers come back here to reload.',
   },
   silo: {
     size: 2, hp: 1500, cost: { metal: 600, oil: 400 }, time: 45, key: 'N', icon: '☢️', age: 4, sight: 4,
@@ -152,7 +190,23 @@ export const BLDS = {
   },
 };
 
-export const BUILD_ORDER = ['city', 'farm', 'lumber', 'mine', 'oilwell', 'barracks', 'stable', 'workshop', 'library', 'tower', 'silo'];
+export const BUILD_ORDER = ['city', 'farm', 'lumber', 'mine', 'oilwell', 'barracks', 'stable', 'workshop', 'library', 'tower', 'airfield', 'silo'];
+
+// Gather buildings can be upgraded once per age (up to level 4 in the Atomic Age).
+// Each level: +1 worker slot and +20% gathering per worker. Cost = cost x new level.
+export const UPGRADE = {
+  rate: 0.2, slots: 1,
+  farm: { cost: { wood: 80, food: 40 }, names: ['Farm', 'Irrigated Farm', 'Plantation', 'Mechanised Farm', 'Agribusiness'] },
+  lumber: { cost: { food: 80, wood: 40 }, names: ['Woodcutter\'s Camp', 'Sawpit', 'Lumber Mill', 'Steam Sawmill', 'Timber Corporation'] },
+  mine: { cost: { wood: 120, food: 80 }, names: ['Mine', 'Deep Mine', 'Shaft Mine', 'Strip Mine', 'Mega Mine'] },
+  oilwell: { cost: { wood: 100, metal: 100 }, names: ['Oil Well', 'Pumpjack', 'Oil Derrick', 'Refinery', 'Mega Refinery'] },
+};
+export function upgradeCost(type, lvl) {
+  const c = UPGRADE[type].cost, out = {};
+  for (const k in c) out[k] = c[k] * lvl;
+  return out;
+}
+export const upgradeTime = (lvl) => 15 + 5 * lvl;
 
 export const NUKE = {
   cost: { metal: 800, oil: 800 }, time: 45, maxStock: 3,
@@ -179,10 +233,15 @@ export const TECHS = {
   wood2: { name: 'Sawmills', age: 2, req: 'wood1', cost: { food: 300, metal: 150 }, time: 35, eff: { gather: { wood: 0.2 } }, desc: '+20% more wood.' },
   logistics: { name: 'Logistics', age: 2, cost: { food: 300, metal: 300 }, time: 40, eff: { attrition: 0.5, speed: 0.1 }, desc: 'Half damage from enemy territory. +10% unit speed.' },
   metal2: { name: 'Deep Mining', age: 3, req: 'metal1', cost: { food: 400, wood: 400 }, time: 40, eff: { gather: { metal: 0.25 } }, desc: '+25% more metal.' },
+  agri3: { name: 'Fertiliser', age: 3, req: 'agri2', cost: { food: 500, wood: 300, metal: 200 }, time: 40, eff: { gather: { food: 0.25 } }, desc: '+25% more food.' },
+  wood3: { name: 'Chainsaws', age: 3, req: 'wood2', cost: { food: 500, metal: 300 }, time: 40, eff: { gather: { wood: 0.25 } }, desc: '+25% more wood.' },
   oil1: { name: 'Refining', age: 3, cost: { food: 400, metal: 300 }, time: 40, eff: { gather: { oil: 0.25 } }, desc: '+25% oil.' },
   weap2: { name: 'Ballistics', age: 3, req: 'weap1', cost: { food: 400, metal: 400 }, time: 45, eff: { atk: 0.15 }, desc: '+15% more attack.' },
   armor2: { name: 'Composite Armor', age: 3, req: 'armor1', cost: { food: 400, metal: 400 }, time: 45, eff: { hp: 0.15 }, desc: '+15% more hit points.' },
   civics2: { name: 'Nationalism', age: 3, req: 'civics', cost: { food: 600, wood: 400, metal: 400 }, time: 45, eff: { popPerCity: 15, cityLimit: 1 }, desc: '+15 population per city and +1 city limit.' },
+  oil2: { name: 'Cracking Towers', age: 3, req: 'oil1', cost: { food: 500, wood: 500, metal: 300 }, time: 45, eff: { gather: { oil: 0.25 } }, desc: '+25% more oil.' },
+  metal3: { name: 'Strip Mining', age: 4, req: 'metal2', cost: { food: 800, wood: 800 }, time: 45, eff: { gather: { metal: 0.3 } }, desc: '+30% more metal.' },
+  oil3: { name: 'Fracking', age: 4, req: 'oil2', cost: { food: 800, wood: 600, metal: 400 }, time: 45, eff: { gather: { oil: 0.3 } }, desc: '+30% more oil. Nobody asks where it comes from.' },
   manhattan: { name: 'Manhattan Project', age: 4, cost: { food: 1000, metal: 1500, oil: 1000 }, time: 60, eff: {}, desc: 'Unlocks the Missile Silo. Everyone will be told.' },
   sdi: { name: 'Missile Defense', age: 4, cost: { metal: 1200, oil: 1200 }, time: 50, eff: {}, desc: '50% chance to shoot down nukes aimed at your territory.' },
 };

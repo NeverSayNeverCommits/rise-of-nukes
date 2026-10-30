@@ -10,6 +10,7 @@ const TS = 32;     // pixels per tile in the cached terrain chunks
 const CHUNK = 16;  // tiles per chunk side
 const DAY = 7200;  // ticks per day/night cycle (6 minutes)
 const TAU = Math.PI * 2;
+export const ALT = 1.1; // how high planes fly, in tiles (they are drawn this far up the screen)
 
 export function shade(hex, amt) { return tint(hex, amt); }
 function rgba(hex, a) {
@@ -53,6 +54,8 @@ export class Renderer {
     this.terrCanvas.width = world.W; this.terrCanvas.height = world.H;
     this.terrVersion = -1;
     this.facing = new Map();
+    this.planes = new Map();   // smooth drawing state for each plane (circling, heading, contrail)
+    this.planeAt = new Map();  // where each plane was drawn, for clicking on it
     this.nextBirds = performance.now() + 15000;
     this.noNight = localStorage.getItem('ron-night') === '0';
     this.calcDepth();
@@ -567,6 +570,16 @@ export class Renderer {
       switch (e.type) {
         case 'shot':
           if (!seen) break;
+          if (e.fa || e.ta) {
+            const e2 = { ...e, y: e.fa ? e.y - ALT : e.y, y2: e.ta ? e.y2 - ALT : e.y2 };
+            if (e.cls === 'aa' || (e.cls === 'bld' && e.age >= 3)) {
+              this.fx.push({ k: 'flak', x: e2.x, y: e2.y, x2: e2.x2 + (Math.random() - 0.5) * 0.8, y2: e2.y2 + (Math.random() - 0.5) * 0.6, t0: now, d: 900 });
+              break;
+            }
+            this.fx.push({ k: 'bullet', x: e2.x, y: e2.y, x2: e2.x2, y2: e2.y2, t0: now, d: 120 });
+            if (e.fa) this.fx.push({ k: 'bullet', x: e2.x, y: e2.y + 0.15, x2: e2.x2, y2: e2.y2 + 0.15, t0: now + 60, d: 120 });
+            break;
+          }
           if (e.melee) { this.fx.push({ k: 'spark', x: e.x2, y: e.y2, t0: now, d: 200 }); break; }
           if (e.ut === 'bowler') { this.fx.push({ k: 'cricket', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 380 }); break; }
           if (e.uq === 1 && e.ut === 'ranged') { this.fx.push({ k: 'pearls', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 220 }); break; }
@@ -599,6 +612,25 @@ export class Renderer {
           this.fx.push({ k: 'nuke', x: e.x, y: e.y, t0: now, d: 9000 });
           this.decals.push({ k: 'crater', x: e.x, y: e.y, r: NUKE.killRadius * 0.9, t0: now, d: 120000 });
           this.shake = Math.max(this.shake, 22);
+          break;
+        case 'bomb': {
+          if (!seen) break;
+          const n = 6 + e.age;
+          for (let i = 0; i < n; i++) {
+            const a = Math.random() * TAU, rr = Math.sqrt(Math.random()) * e.r * 0.8;
+            const bx = e.x + Math.cos(a) * rr, by = e.y + Math.sin(a) * rr, delay = i * 70 + Math.random() * 40;
+            this.fx.push({ k: 'bombfall', x: bx, y: by - ALT, x2: bx, y2: by, t0: now + delay, d: 380, boom: true });
+            this.decals.push({ k: 'crater', x: bx, y: by, r: 0.7, t0: now + delay + 380, d: 40000 });
+          }
+          this.fx.push({ k: 'smoke', x: e.x, y: e.y, t0: now + 500, d: 5000, r: 2 });
+          if (this.onScreen(e.x, e.y, 10)) this.shake = Math.max(this.shake, 6);
+          break;
+        }
+        case 'upgraded':
+          if (seen) {
+            this.burst(e.x, e.y - 0.5, '#ffd700', 26, 3, 0.06);
+            this.fx.push({ k: 'ring', x: e.x, y: e.y, t0: now, d: 900, color: '#ffd700' });
+          }
           break;
         case 'intercept':
           this.fx.push({ k: 'boom', x: e.x, y: e.y, t0: now, d: 1200, r: 2.5, sky: true });
@@ -738,10 +770,13 @@ export class Renderer {
       list.push({ k: 0, e: b, y: b.y + b.size - 0.01 });
     }
     const happy = w.s.mods && w.s.mods.speed;
+    const air = [];
     for (const u of w.s.units) {
       let x = u.px + (u.x - u.px) * a, y = u.py + (u.y - u.py) * a;
-      if (x < x0 - 1 || y < y0 - 1 || x > x1 + 2 || y > y1 + 2) continue;
+      if (x < x0 - 2 || y < y0 - 1 || x > x1 + 3 || y > y1 + 4) continue;
       if (!w.ally(this.me, u.owner) && !this.isVisible(x, y)) continue;
+      if (UNITS[u.type].air) { air.push({ e: u, x, y }); continue; }
+      if (x < x0 - 1 || x > x1 + 2 || y > y1 + 2) continue;
       if (happy) x += Math.sin(now / 260 + u.id) * 0.12; // happy hour: nobody walks straight
       list.push({ k: 1, e: u, x, y });
     }
@@ -768,6 +803,8 @@ export class Renderer {
     this.updateParts(dt, now);
     this.drawParts(ctx, now, 0);
     this.drawParts(ctx, now, 1);
+    this.drawPlanes(ctx, air, sel, ui.hover, now, dt);
+    this.drawDoomSky(ctx, now, dt);
 
     // night
     const night = this.nightAmount();
@@ -848,6 +885,7 @@ export class Renderer {
     this.decals = this.decals.filter((d) => now - d.t0 < d.d);
     for (const d of this.decals) {
       const t = (now - d.t0) / d.d;
+      if (t < 0) continue;
       const [sx, sy] = this.toScreen(d.x, d.y);
       const r = d.r * z;
       const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
@@ -925,7 +963,180 @@ export class Renderer {
       ctx.font = `bold ${Math.max(9, Math.round(z * 0.3))}px system-ui`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx + 2, sy + 2, z * 0.62, z * 0.36);
       ctx.fillStyle = n ? '#7ee787' : '#ffb3ad';
-      ctx.fillText(`${n}/${d.slots}`, sx + 4, sy + 3);
+      ctx.fillText(`${n}/${w.slots(b)}`, sx + 4, sy + 3);
+    }
+    if (b.lvl && b.done && z >= 14) this.levelBadge(ctx, b.lvl, sx + S - z * 0.32, sy + z * 0.3, z);
+  }
+
+  // Gold badge with chevrons for upgraded gather buildings.
+  levelBadge(ctx, lvl, x, y, z) {
+    const r = Math.max(6, z * 0.24);
+    ctx.fillStyle = '#1a1405'; ctx.beginPath(); ctx.arc(x + 1, y + 1, r, 0, TAU); ctx.fill();
+    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 1, x, y, r);
+    g.addColorStop(0, '#fff2a8'); g.addColorStop(1, '#d19a12');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#6b4a00'; ctx.lineWidth = Math.max(1, r * 0.18);
+    const n = Math.min(4, lvl), step = r * 0.32, top = y - ((n - 1) * step) / 2 - r * 0.1;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const yy = top + i * step; ctx.moveTo(x - r * 0.5, yy + r * 0.25); ctx.lineTo(x, yy - r * 0.08); ctx.lineTo(x + r * 0.5, yy + r * 0.25); }
+    ctx.stroke();
+  }
+
+  // ---------- planes ----------
+  // Planes are drawn after everything on the ground, ALT tiles up, with a shadow underneath.
+  // Idle planes circle around their spot. This is only for looks: the game itself keeps them still.
+  drawPlanes(ctx, list, sel, hover, now, dt) {
+    const w = this.world, z = this.cam.z;
+    this.planeAt.clear();
+    if (this.frame % 120 === 0) for (const [id, p] of this.planes) if (this.frame - p.seen > 120) this.planes.delete(id);
+    const items = [];
+    for (const it of list) {
+      const u = it.e, d = UNITS[u.type];
+      const moving = Math.abs(u.x - u.px) + Math.abs(u.y - u.py) > 0.0005;
+      const dir = u.id % 2 ? 1 : -1;
+      let p = this.planes.get(u.id);
+      if (!p) { p = { iw: moving ? 0 : 1, hx: u.fx || 1, hy: u.fy || 0, trail: [], tt: 0 }; this.planes.set(u.id, p); }
+      p.seen = this.frame;
+      p.iw += ((moving ? 0 : 1) - p.iw) * Math.min(1, dt * 1.5);
+      const R = d.bomb ? 1.3 : 0.9, ang = (now / 1000) * (d.bomb ? 0.8 : 1.4) * dir + u.id;
+      const wx = it.x + Math.cos(ang) * R * p.iw, wy = it.y + Math.sin(ang) * R * p.iw;
+      // heading: where it's going, or along the circle when idle
+      let hx = (u.fx || 0) * (1 - p.iw) - Math.sin(ang) * dir * p.iw, hy = (u.fy || 0) * (1 - p.iw) + Math.cos(ang) * dir * p.iw;
+      const hl = Math.hypot(hx, hy) || 1;
+      const k = Math.min(1, dt * 6);
+      p.hx += (hx / hl - p.hx) * k; p.hy += (hy / hl - p.hy) * k;
+      const pl2 = Math.hypot(p.hx, p.hy) || 1; p.hx /= pl2; p.hy /= pl2;
+      // contrail: remember where the tail was
+      p.tt += dt;
+      if (p.tt > 0.05) {
+        p.tt = 0;
+        p.trail.push([wx - p.hx * d.radius * 1.2, wy - ALT - p.hy * d.radius * 1.2, now]);
+        if (p.trail.length > 16) p.trail.shift();
+      }
+      this.planeAt.set(u.id, [wx, wy - ALT]);
+      items.push({ u, d, p, wx, wy });
+    }
+    // shadows
+    for (const { u, d, p, wx, wy } of items) {
+      const [sx, sy] = this.toScreen(wx + 0.35, wy + 0.2);
+      ctx.save(); ctx.globalAlpha = 0.22;
+      this.planeShape(ctx, u.type, sx, sy, d.radius * z * 0.85, p.hx, p.hy, '#000', '#000', w.s.players[u.owner].age, now, true);
+      ctx.restore();
+      if (sel.has(u.id)) {
+        ctx.strokeStyle = 'rgba(126,231,135,0.8)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.ellipse(sx, sy, d.radius * z * 1.6, d.radius * z * 0.9, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+    // contrails
+    ctx.lineCap = 'round';
+    // Two strokes per plane (older half fainter) keeps this cheap even with lots of planes.
+    ctx.lineWidth = Math.max(1.5, z * 0.1);
+    for (const { p } of items) {
+      const tr = p.trail.filter((q) => now - q[2] < 900);
+      if (tr.length < 2) continue;
+      const mid = tr.length >> 1;
+      for (const [from, to, al] of [[0, mid, 0.12], [mid, tr.length - 1, 0.28]]) {
+        if (to <= from) continue;
+        ctx.strokeStyle = `rgba(255,255,255,${al})`;
+        ctx.beginPath();
+        for (let i = from; i <= to; i++) { const [sx, sy] = this.toScreen(tr[i][0], tr[i][1]); if (i === from) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); }
+        ctx.stroke();
+      }
+    }
+    ctx.lineCap = 'butt';
+    // the planes
+    for (const { u, d, p, wx, wy } of items) {
+      const pl = w.s.players[u.owner];
+      const [sx, sy] = this.toScreen(wx, wy - ALT);
+      const r = d.radius * z;
+      this.planeShape(ctx, u.type, sx, sy, r, p.hx, p.hy, pl.color, shade(pl.color, -0.45), pl.age, now, false);
+      if (sel.has(u.id)) { ctx.strokeStyle = '#7ee787'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, r * 1.9, 0, TAU); ctx.stroke(); }
+      if (hover === u.id) { ctx.strokeStyle = w.enemy(this.me, u.owner) ? '#ff7b72' : '#ffe680'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy, r * 2, 0, TAU); ctx.stroke(); }
+      if (u.rank) {
+        ctx.font = `bold ${Math.max(8, Math.round(z * 0.28))}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillStyle = '#000'; ctx.fillText('★'.repeat(u.rank), sx + 1, sy - r * 2.1 + 1);
+        ctx.fillStyle = '#ffd700'; ctx.fillText('★'.repeat(u.rank), sx, sy - r * 2.1);
+      }
+      if (d.bomb && !u.ammo && w.ally(this.me, u.owner) && z >= 16) {
+        ctx.font = `bold ${Math.round(z * 0.26)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillStyle = 'rgba(255,220,120,0.9)'; ctx.fillText('reloading', sx, sy + r * 1.3);
+      }
+      const max = w.maxHp(u);
+      if (u.hp < max * 0.999 || sel.has(u.id) || hover === u.id) this.bar(ctx, sx - r * 1.2, sy - r * 1.9, r * 2.4, Math.max(2, z * 0.07), u.hp / max, null);
+      // damaged planes trail smoke
+      if (u.hp < max * 0.5 && Math.random() < dt * 12) this.part({ k: 'smoke', x: wx - p.hx * r / z, y: wy - ALT - p.hy * r / z, vx: 0, vy: -0.1, life: 900, size: 0.12, layer: 1 });
+    }
+  }
+
+  // Draws one plane pointing along (hx, hy). Local x is "forward".
+  planeShape(ctx, type, sx, sy, r, hx, hy, col, dark, age, now, shadow) {
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.atan2(hy, hx));
+    const body = shadow ? '#000' : col;
+    const metal = shadow ? '#000' : age >= 4 ? '#5d646b' : '#7a8270';
+    ctx.lineWidth = Math.max(1, r * 0.08); ctx.strokeStyle = shadow ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.55)';
+    const poly = (pts, fill) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.moveTo(pts[0] * r, pts[1] * r); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i] * r, pts[i + 1] * r); ctx.closePath(); ctx.fill(); ctx.stroke(); };
+    if (type === 'fighter') {
+      if (age >= 4) {
+        // jet: delta wing, twin tails, afterburner
+        if (!shadow) { const fl = 0.6 + Math.random() * 0.5; ctx.fillStyle = 'rgba(255,170,60,0.85)'; ctx.beginPath(); ctx.moveTo(-1.15 * r, -0.12 * r); ctx.lineTo(-(1.4 + fl) * r, 0); ctx.lineTo(-1.15 * r, 0.12 * r); ctx.fill(); }
+        poly([0.3, 0, -0.9, -1.15, -1.05, -1.1, -0.85, 0, -1.05, 1.1, -0.9, 1.15], metal);
+        poly([1.4, 0, 0.9, -0.16, -1.15, -0.18, -1.15, 0.18, 0.9, 0.16], body);
+        poly([-0.6, -0.22, -1.1, -0.5, -1.15, -0.22], metal); poly([-0.6, 0.22, -1.1, 0.5, -1.15, 0.22], metal);
+        if (!shadow) { ctx.fillStyle = '#8fd3ff'; ctx.beginPath(); ctx.ellipse(0.75 * r, 0, 0.28 * r, 0.09 * r, 0, 0, TAU); ctx.fill(); }
+      } else {
+        // propeller fighter
+        poly([0.15, -1.25, 0.45, -1.2, 0.4, 1.2, 0.15, 1.25], metal);
+        poly([1.1, 0, 0.9, -0.2, -1.0, -0.12, -1.0, 0.12, 0.9, 0.2], body);
+        poly([-0.75, -0.5, -0.6, -0.5, -0.6, 0.5, -0.75, 0.5], metal);
+        if (!shadow) {
+          ctx.fillStyle = '#8fd3ff'; ctx.beginPath(); ctx.ellipse(0.35 * r, 0, 0.2 * r, 0.1 * r, 0, 0, TAU); ctx.fill();
+          ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(0.3 * r, -0.85 * r, 0.12 * r, 0, TAU); ctx.arc(0.3 * r, 0.85 * r, 0.12 * r, 0, TAU); ctx.fill();
+          const a = now / 25;
+          ctx.fillStyle = 'rgba(40,40,40,0.35)'; ctx.beginPath(); ctx.ellipse(1.15 * r, 0, 0.06 * r, 0.42 * r, 0, 0, TAU); ctx.fill();
+          ctx.strokeStyle = '#222'; ctx.lineWidth = Math.max(1, r * 0.06);
+          ctx.beginPath(); ctx.moveTo(1.15 * r, -Math.cos(a) * 0.42 * r); ctx.lineTo(1.15 * r, Math.cos(a) * 0.42 * r); ctx.stroke();
+        }
+      }
+    } else if (age >= 4) {
+      // stealth bomber: flying wing with a zigzag back edge
+      poly([0.9, 0, -0.2, -1.9, -0.45, -1.7, -0.25, -1.1, -0.55, -0.6, -0.35, 0, -0.55, 0.6, -0.25, 1.1, -0.45, 1.7, -0.2, 1.9], shadow ? '#000' : '#30353a');
+      if (!shadow) {
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, r * 0.12);
+        ctx.beginPath(); ctx.moveTo(0.55 * r, -0.65 * r); ctx.lineTo(0.85 * r, 0); ctx.lineTo(0.55 * r, 0.65 * r); ctx.stroke();
+        ctx.fillStyle = '#4a5560'; ctx.beginPath(); ctx.ellipse(0.45 * r, 0, 0.18 * r, 0.1 * r, 0, 0, TAU); ctx.fill();
+      }
+    } else {
+      // four-engine bomber
+      poly([0.25, -2.0, 0.55, -1.95, 0.55, 1.95, 0.25, 2.0], metal);
+      poly([1.25, 0, 1.05, -0.24, -1.3, -0.16, -1.3, 0.16, 1.05, 0.24], body);
+      poly([-0.95, -0.75, -0.75, -0.75, -0.75, 0.75, -0.95, 0.75], metal);
+      if (!shadow) {
+        ctx.fillStyle = '#8fd3ff'; ctx.beginPath(); ctx.ellipse(1.0 * r, 0, 0.16 * r, 0.12 * r, 0, 0, TAU); ctx.fill();
+        const a = now / 30;
+        for (const e of [-1.4, -0.75, 0.75, 1.4]) {
+          ctx.fillStyle = dark; ctx.fillRect(0.45 * r, (e - 0.1) * r, 0.4 * r, 0.2 * r);
+          ctx.strokeStyle = '#222'; ctx.lineWidth = Math.max(1, r * 0.05);
+          ctx.beginPath(); ctx.moveTo(0.88 * r, (e - Math.cos(a + e) * 0.3) * r); ctx.lineTo(0.88 * r, (e + Math.cos(a + e) * 0.3) * r); ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // Late game: as the Doomsday Clock gets close to midnight the sky turns red and ash falls.
+  drawDoomSky(ctx, now, dt) {
+    const w = this.world, lim = w.settings.doomsday | 0;
+    if (!lim || !w.s.doom) return;
+    const f = Math.min(1, w.s.doom / lim);
+    if (f < 0.34) return;
+    const k = (f - 0.34) / 0.66;
+    ctx.fillStyle = `rgba(150,30,10,${0.05 + 0.13 * k + 0.03 * Math.sin(now / 700)})`;
+    ctx.fillRect(-20, -20, this.vw + 40, this.vh + 40);
+    // ash
+    const n = Math.floor(30 * k * dt * 60);
+    for (let i = 0; i < n; i++) {
+      const [x, y] = this.toWorld(Math.random() * this.vw, Math.random() * this.vh * 0.3);
+      this.part({ k: 'spark', x, y, vx: 0.4 + Math.random() * 0.4, vy: 0.8 + Math.random() * 0.6, life: 3000, col: Math.random() < 0.15 ? '#ff8a3a' : '#9a958e', size: 0.03, layer: 2 });
     }
   }
 
@@ -1392,10 +1603,16 @@ export class Renderer {
     for (const f of this.fx) {
       const t = (now - f.t0) / f.d;
       if (t >= 1) {
-        if (f.boom && !f.done) { f.done = true; keep.push({ k: 'boom', x: f.x2, y: f.y2, t0: now, d: 400, r: f.k === 'ball' || f.k === 'rocket' ? 0.9 : 0.5 }); }
+        if (f.boom && !f.done) {
+          f.done = true;
+          const big = f.k === 'bombfall';
+          keep.push({ k: 'boom', x: f.x2, y: f.y2, t0: now, d: big ? 600 : 400, r: big ? 1.3 : f.k === 'ball' || f.k === 'rocket' ? 0.9 : 0.5 });
+          if (big) for (let i = 0; i < 5; i++) { const a = Math.random() * TAU, s = 2 + Math.random() * 3; this.part({ k: 'debris', x: f.x2, y: f.y2, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 3, g: 9, drag: 1, life: 700, r0: Math.random() * 6, layer: 1 }); }
+        }
         continue;
       }
       keep.push(f);
+      if (t < 0) continue; // not started yet
       const isGround = f.k === 'die' || f.k === 'smoke';
       if (isGround !== ground) continue;
       const [sx, sy] = this.toScreen(f.x, f.y);
@@ -1486,6 +1703,29 @@ export class Renderer {
           break;
         }
         case 'nuke': this.drawNukeFx(ctx, sx, sy, t, f.d); break;
+        case 'bombfall': { // a bomb dropping from a plane, with a whistle trail
+          const [tx, ty] = this.toScreen(f.x2, f.y2);
+          const py = sy + (ty - sy) * t * t;
+          ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(tx, py); ctx.stroke();
+          ctx.fillStyle = '#222'; ctx.beginPath(); ctx.ellipse(tx, py, Math.max(1.5, z * 0.06), Math.max(2.5, z * 0.13), 0, 0, TAU); ctx.fill();
+          break;
+        }
+        case 'flak': { // a tracer up into the sky, then a black puff with a flash
+          const [tx, ty] = this.toScreen(f.x2, f.y2);
+          const ft = 0.25;
+          if (t < ft) {
+            const q = t / ft;
+            ctx.strokeStyle = 'rgba(255,220,120,0.95)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(sx + (tx - sx) * Math.max(0, q - 0.4), sy + (ty - sy) * Math.max(0, q - 0.4)); ctx.lineTo(sx + (tx - sx) * q, sy + (ty - sy) * q); ctx.stroke();
+          } else {
+            const q = (t - ft) / (1 - ft);
+            if (q < 0.15) { ctx.fillStyle = `rgba(255,200,80,${1 - q / 0.15})`; ctx.beginPath(); ctx.arc(tx, ty, z * 0.35, 0, TAU); ctx.fill(); }
+            ctx.fillStyle = `rgba(30,30,30,${0.75 * (1 - q)})`;
+            for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(tx + Math.cos(i * 2.1 + f.t0) * z * 0.15, ty + Math.sin(i * 2.1 + f.t0) * z * 0.12 - q * z * 0.2, z * (0.15 + q * 0.3), 0, TAU); ctx.fill(); }
+          }
+          break;
+        }
       }
     }
     this.fx = keep;
