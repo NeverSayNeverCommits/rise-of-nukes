@@ -205,14 +205,28 @@ const S = {
   whistle: (dur = 6) => tone(2400, dur, { vol: 0.12, slide: 300, attack: 0.5 }),
   tick: (hi) => { noise(0.03, { type: 'bandpass', freq: hi ? 4000 : 2800, q: 8, vol: 0.5 }); },
   bell: () => { [262, 524, 786, 1048].forEach((f, i) => tone(f, 3, { vol: 0.25 / (i + 1), attack: 0.002 })); },
+  // Nation sounds.
+  bat: (o = { v: 1 }) => { noise(0.05, { type: 'bandpass', freq: 1800, q: 4, vol: 0.6 * o.v, pan: o.pan }); tone(700, 0.08, { type: 'triangle', vol: 0.25 * o.v, slide: 500, pan: o.pan }); },
+  pop: (o = { v: 1 }) => { for (let i = 0; i < 3; i++) tone(rnd(500, 800), 0.06, { vol: 0.22 * o.v, slide: 1400, when: i * 0.05, pan: o.pan }); },
+  jingle: (o = { v: 1 }) => { for (let i = 0; i < 6; i++) tone(rnd(2600, 3600), 0.25, { type: 'triangle', vol: 0.06 * o.v, when: i * 0.04 + Math.random() * 0.03, attack: 0.002, pan: o.pan }); },
+  horn: (o = { v: 1 }) => { for (let i = 0; i < 2; i++) { tone(440, 0.12, { type: 'square', vol: 0.1 * o.v, lp: 2200, when: i * 0.18, pan: o.pan }); tone(554, 0.12, { type: 'square', vol: 0.07 * o.v, lp: 2200, when: i * 0.18, pan: o.pan }); } },
+  oompah: (o = { v: 1 }) => {
+    // A tuba and a cymbal: oom, pah, oom, pah.
+    const root = [87, 98, 110, 82][Math.floor(Math.random() * 4)];
+    for (let i = 0; i < 4; i++) {
+      if (i % 2 === 0) tone(i === 2 ? root * 1.5 : root, 0.28, { type: 'sawtooth', vol: 0.3 * o.v, lp: 500, q: 2, when: i * 0.3, attack: 0.02, pan: o.pan });
+      else { tone(root * 2.5, 0.15, { type: 'square', vol: 0.06 * o.v, lp: 1600, when: i * 0.3, pan: o.pan }); noise(0.12, { type: 'highpass', freq: 6000, vol: 0.12 * o.v, when: i * 0.3, pan: o.pan }); }
+    }
+  },
+  techno: (o = { v: 1 }) => { for (let i = 0; i < 4; i++) { tone(55, 0.18, { vol: 0.5 * o.v, slide: 40, when: i * 0.25, pan: o.pan }); noise(0.05, { type: 'highpass', freq: 7000, vol: 0.12 * o.v, when: i * 0.25 + 0.125, pan: o.pan }); } },
+  disco: (o = { v: 1 }) => { [523, 659, 784, 659].forEach((f, i) => tone(f, 0.14, { type: 'square', vol: 0.06 * o.v, lp: 2500, when: i * 0.14, pan: o.pan })); },
   boing: () => tone(200, 0.4, { type: 'sine', vol: 0.3, slide: 900, vib: [18, 60] }),
-  fart: () => { tone(rnd(70, 95), 0.5, { type: 'sawtooth', vol: 0.3, lp: 450, q: 3, vib: [32, 25], slide: 55 }); noise(0.45, { freq: 300, vol: 0.12 }); },
   fireworks: () => { for (let i = 0; i < 6; i++) { const w = i * 0.35 + Math.random() * 0.2; tone(rnd(800, 1400), 0.6, { vol: 0.05, slide: 3000, when: w }); noise(0.5, { freq: 2500, vol: 0.35, when: w + 0.6 }); } },
 };
 
 // Stop the same sound piling up when 50 archers shoot at once.
 const lastPlay = new Map();
-const GAP = { sword: 70, bow: 60, gun: 45, mg: 120, cannon: 160, catapult: 150, rocket: 160, tower: 90, hit: 40, grunt: 90, scream: 4000, moo: 600, explode: 120, collapse: 300, ribbit: 150, mutant: 1500 };
+const GAP = { bat: 90, pop: 80, jingle: 200, horn: 900, oompah: 1300, techno: 1100, disco: 800, sword: 70, bow: 60, gun: 45, mg: 120, cannon: 160, catapult: 150, rocket: 160, tower: 90, hit: 40, grunt: 90, scream: 4000, moo: 600, explode: 120, collapse: 300, ribbit: 150, mutant: 1500 };
 
 function play(name, o) {
   if (cfg.muted || !S[name]) return;

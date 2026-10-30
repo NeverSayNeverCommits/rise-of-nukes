@@ -1,14 +1,16 @@
 // In-game user interface: mouse and keyboard input, the HUD, and alerts.
 import { Renderer } from './render.js';
-import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit } from './sim/data.js';
+import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit, forNation, techCost, techTime } from './sim/data.js';
+import { NATIONS, nationOf } from './sim/nations.js';
+import { flagImg } from './flags.js';
 import { DT } from './sim/sim.js';
 import { sfx, toggleMute, say, music, setListener, audioSettings, setAudio } from './sfx.js';
-import { unitName, cowMood, lineFor, pokeLine, cityPokeLine, TAUNTS, CRATE_TEXT, STREAK, awards, rankIcon } from './flavor.js';
+import { unitName, cowMood, lineFor, specialLine, pokeLine, cityPokeLine, TAUNTS, CRATE_TEXT, STREAK, awards, rankIcon } from './flavor.js';
 import { SILLY } from './sim/extras.js';
 
 // Which built-in voice each unit type uses (any number works, it just picks a voice).
-const VOICE = { citizen: 1, infantry: 2, ranged: 3, cavalry: 4, siege: 5 };
-const PITCH = { citizen: 1.25, infantry: 0.95, ranged: 1.1, cavalry: 0.85, siege: 0.7 };
+const VOICE = { citizen: 1, infantry: 2, ranged: 3, cavalry: 4, siege: 5, oompah: 6, scooter: 7, jeepney: 8, bowler: 9 };
+const PITCH = { citizen: 1.25, infantry: 0.95, ranged: 1.1, cavalry: 0.85, siege: 0.7, oompah: 0.75, scooter: 1.35, jeepney: 1.05, bowler: 1.0 };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -51,6 +53,13 @@ export class GameUI {
     if (city) this.r.centreOn(city.x + 1.5, city.y + 1.5);
     this.bind();
     music.play();
+    // Who is who.
+    const nat = nationOf(this.pl);
+    setTimeout(() => {
+      this.chatLine({ p: -1, text: `You lead ${nat.name}. “${nat.motto}”` });
+      const others = this.world.s.players.filter((_, i) => i !== this.me).map((p) => `${p.name} (${nationOf(p).name})`);
+      if (others.length) this.chatLine({ p: -1, text: `Also here: ${others.join(', ')}.` });
+    }, 50);
     this.running = true;
     requestAnimationFrame((t) => this.loop(t));
   }
@@ -369,7 +378,7 @@ export class GameUI {
     const rows = this.s.players.map((p, i) => {
       const units = this.s.units.filter((u) => u.owner === i).length;
       const cities = this.s.blds.filter((b) => b.owner === i && b.type === 'city').length;
-      return `<tr><td><span class="swatch" style="background:${p.color}"></span>${esc(p.name)}${p.alive ? '' : ' 💀'}</td><td>${p.team + 1}</td><td>${AGES[p.age]}</td><td>${cities}</td><td>${units}</td><td>${p.kills}</td><td>${p.lost}</td><td>${p.nukes}</td></tr>`;
+      return `<tr><td><span class="swatch" style="background:${p.color}"></span>${flagImg(p.nation, 12)} ${esc(p.name)}${p.alive ? '' : ' 💀'}</td><td>${p.team + 1}</td><td>${AGES[p.age]}</td><td>${cities}</td><td>${units}</td><td>${p.kills}</td><td>${p.lost}</td><td>${p.nukes}</td></tr>`;
     }).join('');
     return `<table class="scores"><tr><th>Player</th><th>Team</th><th>Age</th><th>Cities</th><th>Units</th><th>Kills</th><th>Lost</th><th>☢</th></tr>${rows}</table>`;
   }
@@ -419,7 +428,13 @@ export class GameUI {
     if (!text && now - this.lastVoice < 1400) return;
     this.lastVoice = now;
     const cls = u.kind === 'u' ? UNITS[u.type].cls : 'inf';
-    const line = text || lineFor(cls, kind);
+    let special = null;
+    if (u.kind === 'u' && !text) {
+      const st = this.world.stats(u.owner, u.type);
+      const key = st.uniq === 2 ? u.type : st.uniq === 1 ? `${this.s.players[u.owner].nation}:${u.type}` : null;
+      if (key && Math.random() < 0.8) special = specialLine(key, kind === 'work' ? 'move' : kind);
+    }
+    const line = text || special || lineFor(cls, kind);
     this.r.bubble(u.id, line);
     if (u.kind === 'u') say(line, VOICE[u.type] || 0, { pitch: PITCH[u.type] || 1, rate: 1.15 });
   }
@@ -442,7 +457,7 @@ export class GameUI {
       return;
     }
     sfx.play('select');
-    if (p.n >= 4) { const line = pokeLine(); this.speak(e, 'poke', line); if (p.n >= 7) { sfx.play('fart'); p.n = 0; } return; }
+    if (p.n >= 4) { const line = pokeLine(); this.speak(e, 'poke', line); if (p.n >= 7) { sfx.play('boing'); p.n = 0; } return; }
     this.speak(e, 'select');
   }
 
@@ -462,9 +477,11 @@ export class GameUI {
         case 'shot': {
           if (!seen) break;
           if (e.p === me || (e.x2 != null && this.isMineNear(e.x2, e.y2))) this.heat += 0.05;
-          const snd = e.cls === 'cow' ? 'hit' : e.melee ? 'sword' : e.cls === 'bld' ? (e.age >= 2 ? 'gun' : 'tower')
+          const nat = { bowler: 'bat', scooter: 'gun', jeepney: 'gun' }[e.ut] || (e.uq === 1 && e.ut === 'ranged' ? 'pop' : null);
+          if (e.uq === 1 && e.ut === 'siege') sfx.at('jingle', e.x, e.y, 1);
+          const snd = nat || (e.cls === 'cow' ? 'hit' : e.melee ? 'sword' : e.cls === 'bld' ? (e.age >= 2 ? 'gun' : 'tower')
             : e.cls === 'sie' ? (e.age >= 4 ? 'rocket' : e.age >= 2 ? 'cannon' : 'catapult')
-              : e.cls === 'cav' && e.age >= 3 ? 'cannon' : e.cls === 'rng' && e.age >= 3 ? 'mg' : e.age >= 2 ? 'gun' : 'bow';
+              : e.cls === 'cav' && e.age >= 3 ? 'cannon' : e.cls === 'rng' && e.age >= 3 ? 'mg' : e.age >= 2 ? 'gun' : 'bow');
           sfx.at(snd, e.x, e.y, 0.9);
           break;
         }
@@ -516,6 +533,12 @@ export class GameUI {
           if (e.tech === 'manhattan') {
             this.alert(e.p === me ? 'Manhattan Project complete. You can build Missile Silos.' : `☢ ${name(e.p)} completed the Manhattan Project!`, e.p === me ? 'good' : 'bad');
             say(e.p === me ? 'The Manhattan Project is complete. Try not to end the world.' : `Warning. ${name(e.p)} has the bomb.`, 'announcer');
+          } else if (TECHS[e.tech].nation) {
+            // National techs are announced to everyone. Bragging rights.
+            const brag = { autobahn: 'The Autobahn is open. No speed limit.', seven11: 'A 7-Eleven has opened on every corner.', karaoke: 'Karaoke night has begun. Nobody is safe.', tigers: 'Beware the cornered tigers.' }[e.tech];
+            this.alert(`⭐ ${e.p === me ? 'You' : name(e.p)}: ${TECHS[e.tech].name}! ${brag || ''}`, e.p === me ? 'good' : 'info');
+            sfx.play(e.tech === 'karaoke' ? 'disco' : e.tech === 'autobahn' ? 'horn' : 'promote');
+            if (e.p === me) say(brag, 'announcer');
           } else if (e.p === me) { this.alert(`${TECHS[e.tech].name} researched`, 'good'); sfx.play('tech'); }
           break;
         case 'built':
@@ -527,7 +550,7 @@ export class GameUI {
         case 'trained':
           if (e.p === me && Math.random() < 0.35) {
             const u = w.get(e.id);
-            if (u && near(u.x, u.y, 20)) { sfx.play('trained'); this.speak(u, 'select'); }
+            if (u && near(u.x, u.y, 20)) { sfx.play(u.type === 'scooter' ? 'horn' : 'trained'); this.speak(u, 'select'); }
           }
           break;
         case 'promote': {
@@ -712,6 +735,15 @@ export class GameUI {
         this.r.bubble(c.id, c.mutant ? pickOne(['GRRRMOOO', 'hhhrrrrnnngh', 'MOO (radioactive)']) : pickOne(['Moo.', 'Moo!', 'Mooo?', 'Moo moo.', '*chews*', '*stares at you*']), 1800);
       }
     }
+    // Bands and jeepneys on screen play music now and then.
+    if (now > (this.nextBand || 0)) {
+      this.nextBand = now + 3500 + Math.random() * 2000;
+      const mus = s.units.filter((u) => (u.type === 'oompah' || u.type === 'jeepney') && this.r.onScreen(u.x, u.y, 0) && this.r.isVisible(u.x, u.y));
+      if (mus.length) {
+        const u = mus[Math.floor(Math.random() * mus.length)];
+        sfx.at(u.type === 'jeepney' ? 'disco' : s.players[u.owner].age >= 4 ? 'techno' : 'oompah', u.x, u.y, 0.9);
+      }
+    }
     const ph = this.r.dayPhase();
     if (ph !== this.lastPhase) {
       if (this.lastPhase && ph === 'dusk') this.chatLine({ p: -1, text: '🌙 Night is falling.' });
@@ -802,7 +834,8 @@ export class GameUI {
     const ents = this.selected();
     const box = $('sel-info');
     if (!ents.length) {
-      box.innerHTML = `<h3>${esc(this.pl.name)}</h3><div class="stats">${AGES[this.pl.age]} Age · Cities ${w.cityCount(this.me)}/${cityLimit(this.pl)}<br>Select units or buildings. Right-click to give orders.<br>Press <b>.</b> to find idle citizens, <b>H</b> for home.</div>`;
+      const nat = nationOf(this.pl);
+      box.innerHTML = `<h3>${flagImg(this.pl.nation, 16)} ${esc(this.pl.name)} <span class="natname">of ${esc(nat.name)}</span></h3><div class="stats">${AGES[this.pl.age]} Age · Cities ${w.cityCount(this.me)}/${cityLimit(this.pl)} · <span title="${esc(nat.power.map(([t, d]) => `${t}: ${d}`).join('\n'))}">${nat.power.map(([t]) => esc(t)).join(' · ')}</span><br>Select units or buildings. Right-click to give orders.<br>Press <b>.</b> to find idle citizens, <b>H</b> for home.</div>`;
       return;
     }
     if (ents.length === 1) {
@@ -820,9 +853,10 @@ export class GameUI {
         const st = w.stats(e.owner, e.type);
         const max = w.maxHp(e), mul = w.rankMul(e);
         box.innerHTML = `<h3>${UNITS[e.type].icon} ${esc(st.name)} ${e.rank ? `<span class="rank">${rankIcon(e.rank)}</span>` : ''}</h3>
-          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${esc(owner.name)} · <i>${esc(unitName(e))}</i></div>
+          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${flagImg(owner.nation, 11)} ${esc(owner.name)} · <i>${esc(unitName(e, owner.nation))}</i></div>
           <div class="hpbar"><div style="width:${(100 * e.hp) / max}%"></div></div>
           <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(max)} · Attack ${(st.atk * mul).toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · Speed ${st.speed.toFixed(1)}${e.kills ? ` · Kills ${e.kills}` : ''}</div>
+          ${st.uniq ? `<div class="stats uniq">${esc(st.desc)}</div>` : ''}
           <div class="stats">${e.owner === this.me ? this.orderText(e) : ''}</div>`;
       } else {
         const d = BLDS[e.type];
@@ -844,7 +878,7 @@ export class GameUI {
           }).join('') + '</div>';
         }
         box.innerHTML = `<h3>${d.icon} ${esc(name)}</h3>
-          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${esc(owner.name)}</div>
+          <div class="stats"><span class="swatch" style="background:${owner.color}"></span>${flagImg(owner.nation, 11)} ${esc(owner.name)}</div>
           <div class="hpbar"><div style="width:${(100 * e.hp) / w.maxHp(e)}%"></div></div>
           <div class="stats">HP ${Math.ceil(e.hp)}/${Math.round(w.maxHp(e))}</div>${extra}`;
       }
@@ -911,11 +945,13 @@ export class GameUI {
     if (d.trains) {
       for (const ut of d.trains) {
         const ud = UNITS[ut];
+        if (!forNation(pl, ud)) continue;
+        if (ud.nation && pl.age + 1 < ud.age) continue;
         const st = w.stats(me, ut);
         const queued = done.reduce((n, b) => n + b.q.filter((q) => q.type === ut).length, 0);
         list.push({
           key: ud.key, icon: ud.icon, label: st.name, cost: st.cost, need: pl.age < ud.age ? `Needs the ${AGES[ud.age]} Age` : '', count: queued,
-          desc: `${ud.desc}<br>HP ${Math.round(st.hp)} · Attack ${st.atk.toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · ${st.time}s`,
+          desc: `${st.uniq ? '⭐ ' : ''}${st.desc}<br>HP ${Math.round(st.hp)} · Attack ${st.atk.toFixed(0)} · Range ${st.range < 1 ? 'melee' : st.range} · ${+st.time.toFixed(1)}s${ud.batch ? ` · makes ${ud.batch}` : ''}`,
           fn: (shift) => { for (let i = 0; i < (shift ? 5 : 1); i++) this.send({ c: 'train', b: pick().id, type: ut }); },
         });
       }
@@ -931,15 +967,15 @@ export class GameUI {
     if (d.research) {
       for (const tk of TECH_ORDER) {
         const t = TECHS[tk];
-        if (pl.techs[tk]) continue;
+        if (pl.techs[tk] || !forNation(pl, t)) continue;
         if (t.age > pl.age + 1) continue;
         let need = '';
         if (pl.pending[tk]) need = 'Researching…';
         else if (pl.age < t.age) need = `Needs the ${AGES[t.age]} Age`;
         else if (t.req && !pl.techs[t.req]) need = `Needs ${TECHS[t.req].name}`;
         list.push({
-          icon: tk === 'manhattan' ? '☢️' : tk === 'sdi' ? '🛡️' : '📜', label: t.name, cost: t.cost, need,
-          desc: `${t.desc} Takes ${t.time}s.`, fn: () => this.send({ c: 'research', b: pick().id, tech: tk }),
+          icon: tk === 'manhattan' ? '☢️' : tk === 'sdi' ? '🛡️' : t.nation ? '⭐' : '📜', label: t.name, cost: techCost(pl, tk), need,
+          desc: `${t.nation ? `<b>${NATIONS[t.nation].name} national tech.</b> ` : ''}${t.desc} Takes ${+techTime(pl, tk).toFixed(1)}s.`, fn: () => this.send({ c: 'research', b: pick().id, tech: tk }),
         });
       }
     }

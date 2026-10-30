@@ -1,5 +1,7 @@
 // Game rules and numbers. Everything balance-related lives here.
 // Times are in seconds, distances in tiles, rates per second.
+// Nation-specific units, techs and bonuses are in nations.js.
+import { NATION_UNITS, NATION_TECHS, nbonus } from './nations.js';
 
 export const RES = ['food', 'wood', 'metal', 'oil'];
 export const RES_ICON = { food: '🌾', wood: '🪵', metal: '⛏️', oil: '🛢️' };
@@ -119,12 +121,12 @@ export const BLDS = {
   },
   barracks: {
     size: 2, hp: 900, cost: { wood: 120 }, time: 25, key: 'B', icon: '⚔️', age: 0, sight: 5,
-    names: ['Barracks', 'Barracks', 'Barracks', 'Barracks', 'Barracks'], trains: ['infantry', 'ranged'],
+    names: ['Barracks', 'Barracks', 'Barracks', 'Barracks', 'Barracks'], trains: ['infantry', 'ranged', 'oompah', 'bowler'],
     desc: 'Trains infantry and ranged units.',
   },
   stable: {
     size: 2, hp: 900, cost: { wood: 140, food: 60 }, time: 25, key: 'T', icon: '🐴', age: 0, sight: 5,
-    names: ['Stable', 'Stable', 'Stable', 'Tank Factory', 'Tank Factory'], trains: ['cavalry'],
+    names: ['Stable', 'Stable', 'Stable', 'Tank Factory', 'Tank Factory'], trains: ['cavalry', 'scooter', 'jeepney'],
     desc: 'Trains cavalry. Makes tanks from the Industrial Age.',
   },
   workshop: {
@@ -185,7 +187,21 @@ export const TECHS = {
   sdi: { name: 'Missile Defense', age: 4, cost: { metal: 1200, oil: 1200 }, time: 50, eff: {}, desc: '50% chance to shoot down nukes aimed at your territory.' },
 };
 
+Object.assign(UNITS, NATION_UNITS);
+Object.assign(TECHS, NATION_TECHS);
+
 export const TECH_ORDER = Object.keys(TECHS);
+
+// Can this player use this unit type / tech? (signature units and national techs are for one nation)
+export const forNation = (player, d) => !d.nation || d.nation === player.nation;
+
+// Library tech cost and time for this player (Taiwan gets a discount).
+export function techCost(player, key) {
+  const c = TECHS[key].cost, f = 1 - nbonus(player, 'techCost'), out = {};
+  for (const k in c) out[k] = Math.floor(c[k] * f);
+  return out;
+}
+export function techTime(player, key) { return TECHS[key].time * (1 - nbonus(player, 'techTime')); }
 
 export const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ecf0f1'];
 
@@ -215,7 +231,8 @@ export function techSum(player, key) {
 }
 
 export function gatherMult(player, res) {
-  let s = 1;
+  const ng = nbonus(player, 'gather');
+  let s = 1 + ((ng && ng[res]) || 0);
   for (const t of TECH_ORDER) {
     const g = player.techs[t] && TECHS[t].eff.gather;
     if (g && g[res]) s += g[res];

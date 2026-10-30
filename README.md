@@ -9,7 +9,7 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 1. Open the game page.
 2. One person clicks **Host game** and shares the 5-letter room code, or the invite link.
 3. Everyone else types the code and clicks **Join game**.
-4. In the lobby, pick colours and teams. Same team = allies. The host picks the settings and clicks **Start game**.
+4. In the lobby, pick a nation, colour and team. Same team = allies. The host picks the settings and clicks **Start game**.
 
 **Practice alone** starts a game with just you. Use it to learn the controls or try things out. Set *Start age: Atomic* and *Start resources: Insane* to go straight to the nukes.
 
@@ -28,6 +28,19 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 | **Veterans** | Units that get kills earn ranks (★ at 3 kills, ★★ at 7, ★★★ at 15). Each rank gives +15% attack and HP. |
 | **Day and night** | A full day lasts 6 minutes. At night, windows light up. You can turn this off in the settings. |
 
+### Nations
+
+Like in *Rise of Nations*, everyone plays the same game, but each nation has a few special things. Pick one in the lobby, or pick **Random**. Two players can pick the same nation.
+
+| | 🇩🇪 Germany | 🇹🇼 Taiwan | 🇵🇭 Philippines | 🇵🇰 Pakistan |
+|---|---|---|---|---|
+| **National power** | Buildings +30% health. Units train 20% faster. | Library techs cost 25% less and finish 30% faster. Cities make twice the free food and wood. | Citizens build 50% faster. +10 population per city. Cows give double food. | Farms make 20% more food. Half damage in enemy territory. |
+| **Unique units** | Landsknecht (Gunpowder infantry): melee, giant sword, hits everyone nearby. Leopard tanks (Industrial, Atomic): tougher and faster. | Bubble Tea Gunners (Industrial, Atomic ranged): fire tapioca pearls 33% faster. | Mactan Warriors (Ancient, Classical infantry): +30% attack, +10% speed. | Jingle Truck Artillery (Industrial, Atomic siege): tougher, faster, bigger blast, bells. |
+| **Signature unit** | 🎺 Oompah Band (Classical+, Barracks): doesn't fight, but nearby units attack 25% faster. Becomes a techno DJ in the Atomic Age. | 🛵 Scooter Swarm (Industrial+, Stable): three fast scooters per order. | 🚐 Battle Jeepney (Industrial+, Stable): shoots from the windows and heals your units nearby. | 🏏 Fast Bowler (Ancient+, Barracks): throws cricket balls. Longest range of any soldier. |
+| **National tech** | Autobahn: +40% speed inside your borders. | 7-Eleven on Every Corner: units heal inside your borders. | Karaoke Night: enemies in your land are 25% slower and take double territory damage. | Cornered Tigers: units do 50% more damage below half health. |
+
+Cities get local names, and so do most soldiers. Selecting a nation unit shows what makes it special.
+
 ### Silly stuff
 
 This is on by default. The host can switch it off in the lobby ("Silly stuff: Off").
@@ -36,7 +49,7 @@ This is on by default. The host can switch it off in the lobby ("Silly stuff: Of
 - **Supply crates** appear. Touch one with any unit to open it. You might get resources, free soldiers, a free tech, more cows… or a single sad potato.
 - **Random events** happen every few minutes: a plague of frogs (farms work at half speed), a cow stampede, happy hour (everyone moves faster), a tax audit, an economic boom, a supply drop, or a **meteor** (you get a warning circle first, so move your stuff).
 - **Units talk back.** Every unit has a name. Click the same unit too many times and it will complain.
-- **Taunts.** Type a number from 1 to 25 in chat and everyone's browser says it out loud. Try 11, 14 and 22.
+- **Taunts.** Type a number from 1 to 29 in chat and everyone's browser says it out loud. Try 11, 14 and 22.
 - **Awards** at the end of the game, like *Most Likely to Start World War 3* and *Steak Enthusiast*.
 
 ### Sound and display
@@ -104,6 +117,7 @@ Any static file server works. Opening `index.html` straight from disk won't work
 |---|---|
 | `js/sim/data.js` | **All the game numbers**: units, buildings, techs, costs, ages. Start here to change balance. |
 | `js/sim/sim.js` | The deterministic game simulation (units, combat, territory, nukes). |
+| `js/sim/nations.js` | **The four nations**: powers, unique units, signature units and national techs. Start here to change or add a nation. |
 | `js/sim/extras.js` | Silly stuff: cows, mutant cows, crates, meteors and random events. Also deterministic. |
 | `js/sim/map.js` | Random map generator. |
 | `js/sim/path.js` | A* path finding. |
@@ -112,6 +126,7 @@ Any static file server works. Opening `index.html` straight from disk won't work
 | `js/render.js` | Canvas drawing: terrain, units, particles, day and night. |
 | `js/sprites.js` | Draws the building pictures for each age (in code, no image files). |
 | `js/sfx.js` | Sound effects, music and spoken voices. All made in code with Web Audio, no sound files. |
+| `js/flags.js` | Draws the national flags (flag emojis don't show on Windows). |
 | `js/flavor.js` | Unit names, voice lines, taunts and end-of-game awards. |
 | `js/game.js` | Input, HUD and alerts. |
 | `js/main.js` | Menu and lobby screens. |

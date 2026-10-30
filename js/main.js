@@ -3,6 +3,8 @@ import { Session, MAX_PLAYERS } from './session.js';
 import { GameUI } from './game.js';
 import { PLAYER_COLORS } from './sim/data.js';
 import { sfx, say, audioSettings, setAudio } from './sfx.js';
+import { NATIONS, NATION_KEYS, NATION_UNITS, NATION_TECHS } from './sim/nations.js';
+import { flagImg } from './flags.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -62,13 +64,18 @@ function renderLobby(lobby, me) {
     const colorSel = mine
       ? `<select data-color>${PLAYER_COLORS.map((c) => `<option value="${c}" ${c === p.color ? 'selected' : ''} style="background:${c}">${c === p.color ? '■ ' : ''}${colorName(c)}</option>`).join('')}</select>`
       : `<span class="swatch" style="background:${p.color}"></span>${colorName(p.color)}`;
+    const natSel = mine
+      ? `<select data-nation><option value="random" ${p.nation === 'random' ? 'selected' : ''}>🎲 Random</option>${NATION_KEYS.map((k) => `<option value="${k}" ${k === p.nation ? 'selected' : ''}>${NATIONS[k].name}</option>`).join('')}</select>`
+      : nationLabel(p.nation);
     const teamSel = mine
       ? `<select data-team>${Array.from({ length: MAX_PLAYERS }, (_, t) => `<option value="${t}" ${t === p.team ? 'selected' : ''}>Team ${t + 1}</option>`).join('')}</select>`
       : `Team ${p.team + 1}`;
     const kick = host && i !== 0 ? `<button class="small secondary" data-kick="${i}">Kick</button>` : '';
-    return `<tr><td><span class="swatch" style="background:${p.color}"></span>${esc(p.name)}${i === 0 ? ' 👑' : ''}${mine ? ' (you)' : ''}${p.online === false ? ' (offline)' : ''}</td><td>${colorSel}</td><td>${teamSel}</td><td>${kick}</td></tr>`;
+    return `<tr><td><span class="swatch" style="background:${p.color}"></span>${esc(p.name)}${i === 0 ? ' 👑' : ''}${mine ? ' (you)' : ''}${p.online === false ? ' (offline)' : ''}</td><td><span class="nat">${flagImg(p.nation || 'random', 16)}${natSel}</span></td><td>${colorSel}</td><td>${teamSel}</td><td>${kick}</td></tr>`;
   }).join('');
   tb.querySelector('[data-color]')?.addEventListener('change', (e) => session.setMine({ color: e.target.value }));
+  tb.querySelector('[data-nation]')?.addEventListener('change', (e) => { localStorage.setItem('ron-nation', e.target.value); session.setMine({ nation: e.target.value }); });
+  renderNationCard(lobby.players[me]?.nation);
   tb.querySelector('[data-team]')?.addEventListener('change', (e) => session.setMine({ team: +e.target.value }));
   tb.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', () => session.kick(+b.dataset.kick)));
   for (const sel of $('settings').querySelectorAll('select')) {
@@ -84,6 +91,27 @@ function renderLobby(lobby, me) {
       ? 'Practice mode: just you, no enemies. Good for learning and testing.'
       : n < 2 ? 'Send the room code or invite link to your friends. You can also start alone.' : `${n} players ready.`);
   } else status('lobby-status', 'Waiting for the host to start…');
+}
+
+const nationLabel = (k) => (NATIONS[k] ? NATIONS[k].name : 'Random');
+
+// The box under the player list that explains your nation.
+function renderNationCard(k) {
+  const box = $('nation-card');
+  const n = NATIONS[k];
+  if (!n) {
+    box.innerHTML = `<h3>${flagImg('random', 22)} Random nation</h3><div class="motto">You will find out when the game starts. Exciting!</div>
+      <div class="nat-grid">${NATION_KEYS.map((key) => `<div>${flagImg(key, 14)} <b>${NATIONS[key].name}</b>: ${esc(NATIONS[key].motto)}</div>`).join('')}</div>`;
+    return;
+  }
+  const sig = NATION_UNITS[n.signature], tech = NATION_TECHS[n.tech];
+  box.innerHTML = `<h3>${flagImg(k, 22)} ${n.name}</h3><div class="motto">“${esc(n.motto)}”</div>
+    <div class="nat-grid">
+      <div><b>National power</b><ul>${n.power.map(([t, d]) => `<li><b>${esc(t)}:</b> ${esc(d)}</li>`).join('')}</ul></div>
+      <div><b>Unique units</b><ul>${n.unique.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>
+        <b>Signature unit</b><ul><li>${sig.icon} <b>${esc(sig.names[sig.age])}</b> (${esc(['Ancient', 'Classical', 'Gunpowder', 'Industrial', 'Atomic'][sig.age])} Age): ${esc(sig.desc.replace(/^[^.]*signature unit\. /, ''))}</li></ul>
+        <b>National tech</b><ul><li>📜 <b>${esc(tech.name)}</b>: ${esc(tech.desc)}</li></ul></div>
+    </div>`;
 }
 
 const COLOR_NAMES = { '#e74c3c': 'Red', '#3498db': 'Blue', '#2ecc71': 'Green', '#f1c40f': 'Yellow', '#9b59b6': 'Purple', '#e67e22': 'Orange', '#1abc9c': 'Teal', '#ecf0f1': 'White' };

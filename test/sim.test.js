@@ -44,10 +44,10 @@ function botCommands(w, tick) {
     const gb = w.s.blds.filter((b) => b.owner === p && BLDS[b.type].gather);
     for (const u of cits) if (!u.ord && gb.length) cmds.push({ p, c: 'work', ids: [u.id], t: gb[u.id % gb.length].id });
     for (const b of w.s.blds.filter((b) => b.owner === p && b.done)) {
-      if (b.type === 'barracks') cmds.push({ p, c: 'train', b: b.id, type: step % 2 ? 'infantry' : 'ranged' });
-      if (b.type === 'stable') cmds.push({ p, c: 'train', b: b.id, type: 'cavalry' });
+      if (b.type === 'barracks') cmds.push({ p, c: 'train', b: b.id, type: ['infantry', 'ranged', 'oompah', 'bowler'][step % 4] });
+      if (b.type === 'stable') cmds.push({ p, c: 'train', b: b.id, type: ['cavalry', 'scooter', 'jeepney'][step % 3] });
       if (b.type === 'workshop') cmds.push({ p, c: 'train', b: b.id, type: 'siege' });
-      if (b.type === 'library') for (const t of ['agri1', 'wood1', 'civics', 'weap1', 'armor1', 'manhattan']) cmds.push({ p, c: 'research', b: b.id, tech: t });
+      if (b.type === 'library') for (const t of ['agri1', 'wood1', 'civics', 'weap1', 'armor1', 'manhattan', 'autobahn', 'seven11', 'karaoke', 'tigers']) cmds.push({ p, c: 'research', b: b.id, tech: t });
     }
     // Every so often send the army at the next player's capital.
     if (step % 15 === 14 && army.length) {
@@ -166,6 +166,67 @@ assert.ok(target.hp <= 1, 'city ruined');
   assert.ok(seen.has('crate'), 'a crate was opened');
   const r = new World(setup(), JSON.parse(JSON.stringify(w.serialize())));
   assert.equal(r.hash(), w.hash(), 'extras save/load');
+}
+
+// 7. Nations: each one gets its own units, techs and bonuses, and stays in sync.
+{
+  const ns = ['germany', 'taiwan', 'philippines', 'pakistan'];
+  const st = () => ({ ...setup({ startAge: 3 }), players: setup().players.map((p, i) => ({ ...p, nation: ns[i] })) });
+  const w = new World(st()), w2 = new World(st());
+  assert.deepEqual(w.s.players.map((p) => p.nation), ns);
+  assert.equal(w.s.blds.find((b) => b.owner === 0 && b.type === 'city').name, 'Berlin');
+  // Unique units and stats.
+  assert.equal(w.stats(0, 'cavalry').name, 'Leopard Tank');
+  assert.equal(w.stats(1, 'ranged').name, 'Bubble Tea Gunner');
+  assert.equal(w.stats(3, 'siege').name, 'Jingle Truck Artillery');
+  assert.equal(w.stats(2, 'infantry').name, 'Rifleman');
+  assert.ok(w.stats(0, 'citizen').time < w.stats(1, 'citizen').time, 'Germany trains faster');
+  assert.ok(w.maxHp(w.s.blds.find((b) => b.owner === 0)) > w.maxHp(w.s.blds.find((b) => b.owner === 1)), 'German buildings are tougher');
+  assert.ok(w.popCap(2) > w.popCap(1), 'Filipino families are bigger');
+  // Each player builds a barracks, a stable and a library next to their capital.
+  const place = (w, p, type) => {
+    const c = w.s.blds.find((b) => b.owner === p && b.type === 'city');
+    for (let r = 3; r < 12; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (w.canPlace(p, type, c.x + dx, c.y + dy).ok) return w.finishBld(w.addBld(type, p, c.x + dx, c.y + dy, true)) || w.s.blds[w.s.blds.length - 1];
+    }
+    throw new Error('no room for ' + type);
+  };
+  const blds = [w, w2].map((x) => [0, 1, 2, 3].map((p) => ({ bar: place(x, p, 'barracks'), sta: place(x, p, 'stable'), lib: place(x, p, 'library') })));
+  const cmds = [];
+  for (let p = 0; p < 4; p++) {
+    const b = blds[0][p];
+    for (const t of ['oompah', 'bowler', 'infantry', 'infantry']) cmds.push({ p, c: 'train', b: b.bar.id, type: t });
+    for (const t of ['scooter', 'jeepney', 'cavalry']) cmds.push({ p, c: 'train', b: b.sta.id, type: t });
+    for (const t of ['autobahn', 'seven11', 'karaoke', 'tigers']) cmds.push({ p, c: 'research', b: b.lib.id, tech: t });
+  }
+  // Taiwan pays less for techs.
+  const before = w.s.players.map((p) => p.res.food);
+  for (let i = 0; i < 1400; i++) { const c = i === 0 ? cmds : []; w.step(c); w2.step(c); }
+  assert.equal(w.hash(), w2.hash(), 'nations out of sync');
+  const count = (p, t) => w.s.units.filter((u) => u.owner === p && u.type === t).length;
+  assert.equal(count(0, 'oompah'), 1); assert.equal(count(1, 'oompah'), 0);
+  assert.equal(count(1, 'scooter'), 3, 'scooters come in threes'); assert.equal(count(0, 'scooter'), 0);
+  assert.equal(count(2, 'jeepney'), 1); assert.equal(count(3, 'bowler'), 1); assert.equal(count(2, 'bowler'), 0);
+  assert.deepEqual(w.s.players.map((p) => Object.keys(p.techs).sort().join()), ['autobahn', 'seven11', 'karaoke', 'tigers']);
+  // Band makes neighbours attack faster.
+  const band = w.s.units.find((u) => u.type === 'oompah');
+  const pal = w.s.units.find((u) => u.owner === 0 && u.type === 'infantry');
+  pal.x = band.x + 1; pal.y = band.y; w.buildBuckets(); w.nationTick();
+  assert.ok(w.buffed && w.buffed.has(pal.id), 'band buff');
+  // Jeepney heals.
+  const jeep = w.s.units.find((u) => u.type === 'jeepney');
+  const hurt = w.s.units.find((u) => u.owner === 2 && u.type === 'infantry');
+  hurt.x = jeep.x + 1; hurt.y = jeep.y; hurt.hp = 10;
+  for (let i = 0; i < 40; i++) w.step([]);
+  assert.ok(hurt.hp > 12, 'jeepney heals');
+  // Autobahn: faster inside own borders.
+  const z = new World(st());
+  z.s.players[0].techs.autobahn = 1; z.nationTick(); z.spdMul = 1;
+  const u0 = z.s.units.find((u) => u.owner === 0 && u.type === 'infantry'), u1 = z.s.units.find((u) => u.owner === 1 && u.type === 'infantry');
+  for (const u of [u0, u1]) { u.path = [u.x + 5, u.y]; u.pi = 0; u.sx = null; }
+  const x0 = u0.x, x1 = u1.x; z.walk(u0, 2); z.walk(u1, 2);
+  assert.ok(Math.abs((u0.x - x0) / (u1.x - x1) - 1.4) < 1e-9, 'autobahn speed');
+  console.log(`nations ok: ${w.s.players.map((p, i) => `${p.nation} food ${Math.round(before[i] - p.res.food)}`).join(', ')}`);
 }
 
 console.log('ALL TESTS PASSED');

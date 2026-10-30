@@ -3,7 +3,9 @@
 import {
   RES, AGES, AGE_UP, GATHER_RATE, CITY_INCOME, BUILD_RATE, POP_MAX, CITY_MIN_DIST, ATTRITION,
   FALLOUT_DMG, MULT, UNITS, BLDS, TECHS, NUKE, START_RES, MAP_SIZES, cityLimit, cityRadius, techSum, gatherMult,
+  forNation, techCost, techTime,
 } from './data.js';
+import { NATIONS, NATION_KEYS, NATION_UNIQUE, nationOf, nbonus } from './nations.js';
 import { genMap, T, DEP } from './map.js';
 import { PathFinder } from './path.js';
 import { nextRand } from './rng.js';
@@ -18,7 +20,7 @@ export function defaultSettings() {
 }
 
 export class World {
-  // setup: { seed, players: [{ name, color, team }], settings }
+  // setup: { seed, players: [{ name, color, team, nation }], settings }
   constructor(setup, savedState = null) {
     this.setup = setup;
     const st = { ...defaultSettings(), ...(setup.settings || {}) };
@@ -41,6 +43,7 @@ export class World {
       tick: 0, nextId: 1, rng: (this.setup.seed ^ 0x9e3779b9) | 0,
       players: this.setup.players.map((p, i) => ({
         name: p.name, color: p.color, team: p.team ?? i, age: Math.max(0, Math.min(4, st.startAge | 0)),
+        nation: NATIONS[p.nation] ? p.nation : NATION_KEYS[i % NATION_KEYS.length], cityN: 1,
         res: { ...res }, techs: {}, pending: {}, alive: true, nukes: 0, kills: 0, lost: 0,
         st: { gath: { food: 0, wood: 0, metal: 0, oil: 0 }, built: 0, cows: 0, crates: 0, caps: 0, razed: 0, promos: 0 },
       })),
@@ -49,7 +52,7 @@ export class World {
     this.rebuild();
     this.map.starts.forEach(([sx, sy], p) => {
       const c = this.addBld('city', p, sx - 1, sy - 1, true);
-      c.name = 'Capital';
+      c.name = nationOf(this.s.players[p]).cities[0];
       for (let k = 0; k < 4; k++) {
         const spot = this.freeSpotNear(sx, sy + 2, 1);
         this.addUnit('citizen', p, spot[0], spot[1]);
@@ -116,19 +119,31 @@ export class World {
       c = this.statCache[p] = {};
       const pl = this.s.players[p];
       const hpB = 1 + techSum(pl, 'hp'), atkB = 1 + techSum(pl, 'atk'), spB = 1 + techSum(pl, 'speed');
+      const trainF = 1 - nbonus(pl, 'trainTime');
+      const uniq = NATION_UNIQUE[pl.nation] || {};
       for (const k in UNITS) {
         const d = UNITS[k], a = pl.age, mil = d.cls !== 'cit';
-        c[k] = {
-          name: d.names[a], cls: d.cls, hp: d.hp[a] * (mil ? hpB : 1), atk: d.atk[a] * (mil ? atkB : 1),
-          range: d.range[a], cd: d.cd[a], speed: d.speed[a] * spB, sight: d.sight, radius: d.radius,
-          splash: d.splash || 0, cost: d.cost[a], time: d.time[a],
+        const st = {
+          name: d.names[a], cls: d.cls, hp: d.hp[a], atk: d.atk[a],
+          range: d.range[a], cd: d.cd[a], speed: d.speed[a], sight: d.sight, radius: d.radius,
+          splash: d.splash || 0, cost: d.cost[a], time: d.time[a], desc: d.desc, uniq: d.nation ? 2 : 0,
         };
+        // Nation unique version of this unit in this age.
+        const un = uniq[k] && uniq[k][a];
+        if (un) {
+          st.name = un.name; st.desc = un.desc; st.uniq = 1;
+          for (const f in un.mul || {}) st[f] *= un.mul[f];
+          Object.assign(st, un.set || {});
+        }
+        st.hp *= mil ? hpB : 1; st.atk *= mil ? atkB : 1; st.speed *= spB; st.time *= trainF;
+        c[k] = st;
       }
     }
     return c[type];
   }
 
-  bldMaxHp(b) { return BLDS[b.type].hp; }
+  bldMaxHp(b) { return this.bldHp(b.type, b.owner); }
+  bldHp(type, owner) { return BLDS[type].hp * (1 + nbonus(this.s.players[owner], 'bldHp')); }
   maxHp(e) { return e.kind === 'u' ? this.uMax(e) : e.kind === 'c' ? (e.mutant ? MUTANT.hp : COW.hp) : this.bldMaxHp(e); }
 
   // Called when age or tech changes: keep each unit's health share the same.
@@ -147,7 +162,8 @@ export class World {
   popCap(p) {
     const pl = this.s.players[p];
     let n = 0;
-    for (const b of this.s.blds) if (b.owner === p && b.type === 'city' && b.done) n += BLDS.city.pop + techSum(pl, 'popPerCity');
+    const per = BLDS.city.pop + techSum(pl, 'popPerCity') + nbonus(pl, 'popPerCity');
+    for (const b of this.s.blds) if (b.owner === p && b.type === 'city' && b.done) n += per;
     return Math.min(POP_MAX, n);
   }
   cityCount(p) {
@@ -181,7 +197,7 @@ export class World {
     const d = BLDS[type];
     const b = {
       kind: 'b', id: this.newId(), type, owner, x, y, size: d.size,
-      hp: done ? d.hp : d.hp * 0.1, prog: done ? d.time : 0, done, q: [], rally: null,
+      hp: this.bldHp(type, owner) * (done ? 1 : 0.1), prog: done ? d.time : 0, done, q: [], rally: null,
       stock: 0, cd: 0, tgt: 0, lastAtk: -1, scan: 0,
     };
     this.s.blds.push(b);
@@ -327,6 +343,7 @@ export class World {
       if (o >= 0 && this.enemy(o, b.owner)) {
         const was = b.owner;
         b.owner = o; b.q = []; b.rally = null;
+        b.hp = Math.min(b.hp, this.bldMaxHp(b));
         this.event({ type: 'convert', id: b.id, from: was, to: o, x: b.x + b.size / 2, y: b.y + b.size / 2 });
       }
     }
@@ -391,7 +408,7 @@ export class World {
         }
         const ud = UNITS[cmd.type];
         if (!ud || !d.trains || !d.trains.includes(cmd.type)) break;
-        if (pl.age < ud.age) break;
+        if (pl.age < ud.age || !forNation(pl, ud)) break;
         if (b.q.length >= 8) break;
         const st = this.stats(p, cmd.type);
         if (!this.canAfford(p, st.cost)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
@@ -413,11 +430,12 @@ export class World {
         }
         const t = TECHS[cmd.tech];
         if (!t || !BLDS[b.type].research || pl.techs[cmd.tech] || pl.pending[cmd.tech]) break;
-        if (pl.age < t.age || (t.req && !pl.techs[t.req])) break;
-        if (!this.canAfford(p, t.cost)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
-        this.pay(p, t.cost);
+        if (pl.age < t.age || (t.req && !pl.techs[t.req]) || !forNation(pl, t)) break;
+        const tc = techCost(pl, cmd.tech), tt = techTime(pl, cmd.tech);
+        if (!this.canAfford(p, tc)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
+        this.pay(p, tc);
         pl.pending[cmd.tech] = 1;
-        b.q.push({ k: 'tech', type: cmd.tech, t: t.time, total: t.time, cost: t.cost });
+        b.q.push({ k: 'tech', type: cmd.tech, t: tt, total: tt, cost: tc });
         break;
       }
       case 'cancel': {
@@ -510,6 +528,7 @@ export class World {
     if (m.gather) for (const k in this.gathMul) this.gathMul[k] *= m.gather.mul;
     if (m.food) this.gathMul.food *= m.food.mul;
     this.buildBuckets();
+    this.nationTick();
     this.assignWorkers();
     for (const u of s.units) if (u.hp > 0) this.updateUnit(u);
     this.separate();
@@ -523,6 +542,23 @@ export class World {
     this.hazards();
     this.cleanup();
     this.checkEnd();
+  }
+
+  // Per-tick nation effects that other code reads: national techs, and which units hear a band.
+  nationTick() {
+    const s = this.s;
+    this.autobahn = s.players.map((pl) => !!pl.techs.autobahn);
+    this.karaoke = s.players.map((pl) => !!pl.techs.karaoke);
+    this.tigers = s.players.map((pl) => !!pl.techs.tigers);
+    this.buffed = null;
+    for (const u of s.units) {
+      if (u.hp <= 0 || UNITS[u.type].support !== 'band') continue;
+      if (!this.buffed) this.buffed = new Set();
+      this.unitsNear(u.x, u.y, 4, (o) => {
+        const dx = o.x - u.x, dy = o.y - u.y;
+        if (o.owner === u.owner && o !== u && dx * dx + dy * dy <= 16) this.buffed.add(o.id);
+      });
+    }
   }
 
   buildBuckets() {
@@ -594,6 +630,9 @@ export class World {
   // Walk the current path. Returns true when the end is reached.
   walk(u, speed) {
     let rem = speed * this.spdMul * DT;
+    const here = this.terr[Math.floor(u.y) * this.W + Math.floor(u.x)];
+    if (here === u.owner) { if (this.autobahn[u.owner]) rem *= 1.4; }
+    else if (here >= 0 && this.karaoke[here] && this.enemy(here, u.owner)) rem *= 0.75;
     // Stuck check: if we barely moved in the last second, skip the current waypoint.
     if (this.s.tick % 20 === u.id % 20) {
       const mx = u.x - (u.sx ?? u.x), my = u.y - (u.sy ?? u.y);
@@ -665,12 +704,13 @@ export class World {
 
   attack(u, t, st) {
     if (u.cd > 0) return;
-    u.cd = st.cd;
+    u.cd = this.buffed && this.buffed.has(u.id) ? st.cd * 0.75 : st.cd;
     const [tx, ty] = this.centre(t);
     const dx = tx - u.x, dy = ty - u.y, d = Math.sqrt(dx * dx + dy * dy);
     if (d > 1e-6) { u.fx = dx / d; u.fy = dy / d; }
-    this.event({ type: 'shot', p: u.owner, cls: st.cls, age: this.s.players[u.owner].age, x: u.x, y: u.y, x2: tx, y2: ty, melee: st.range < 1 });
-    const atk = st.atk * this.rankMul(u);
+    this.event({ type: 'shot', p: u.owner, cls: st.cls, age: this.s.players[u.owner].age, x: u.x, y: u.y, x2: tx, y2: ty, melee: st.range < 1, ut: u.type, uq: st.uniq });
+    let atk = st.atk * this.rankMul(u);
+    if (this.tigers[u.owner] && u.hp < this.uMax(u) * 0.5) atk *= 1.5;
     this.damage(t, atk * MULT[st.cls][this.clsOf(t)], u.owner, u.id);
     if (st.splash > 0) {
       this.unitsNear(tx, ty, st.splash + 0.5, (o) => {
@@ -718,7 +758,7 @@ export class World {
     if (u.cd > 0) u.cd -= DT;
     u.working = false;
     const o = u.ord;
-    const mil = st.cls !== 'cit';
+    const mil = st.cls !== 'cit' && UNITS[u.type].support !== 'band';
 
     // Idle or attack-moving soldiers look for fights.
     if (mil && (!o || (o.k === 'move' && o.am))) {
@@ -771,9 +811,11 @@ export class World {
       const [bx, by] = this.centre(b);
       const dx = bx - u.x, dy = by - u.y, dd = Math.sqrt(dx * dx + dy * dy);
       if (dd > 1e-6) { u.fx = dx / dd; u.fy = dy / dd; }
+      const bmax = this.bldMaxHp(b);
       if (!b.done) {
-        b.prog += BUILD_RATE * DT;
-        b.hp = Math.min(d.hp, b.hp + (d.hp * 0.9 * BUILD_RATE * DT) / d.time);
+        const rate = BUILD_RATE * (1 + nbonus(this.s.players[u.owner], 'buildSpeed')) * DT;
+        b.prog += rate;
+        b.hp = Math.min(bmax, b.hp + (bmax * 0.9 * rate) / d.time);
         if (b.prog >= d.time) this.finishBld(b);
       } else if (d.gather) {
         const pl = this.s.players[u.owner];
@@ -781,8 +823,8 @@ export class World {
         pl.res[d.gather] += amt * DT;
         pl.st.gath[d.gather] += amt * DT;
         this.rates[u.owner][d.gather] += amt;
-      } else if (b.hp < d.hp) {
-        b.hp = Math.min(d.hp, b.hp + 15 * DT); // repair
+      } else if (b.hp < bmax) {
+        b.hp = Math.min(bmax, b.hp + 15 * DT); // repair
       } else {
         this.setOrder(u, null);
       }
@@ -795,7 +837,10 @@ export class World {
     this.s.players[b.owner].st.built++;
     this.event({ type: 'built', p: b.owner, id: b.id, btype: b.type, x: b.x + b.size / 2, y: b.y + b.size / 2 });
     if (b.type === 'city') {
-      b.name = 'City ' + (this.cityCount(b.owner));
+      const pl = this.s.players[b.owner], list = nationOf(pl).cities;
+      const n = pl.cityN || 1;
+      b.name = n < list.length ? list[n] : `${list[n % list.length]} ${Math.floor(n / list.length) + 1}`;
+      pl.cityN = n + 1;
       this.recalcTerritory();
     }
     // Builders of non-gather buildings move on to the nearest unfinished building, or go idle.
@@ -895,19 +940,8 @@ export class World {
   finishItem(b, it) {
     const p = b.owner, pl = this.s.players[p];
     if (it.k === 'unit') {
-      const spot = this.spawnSpot(b);
-      const u = this.addUnit(it.type, p, spot[0], spot[1]);
-      this.popNow[p]++;
-      if (b.rally) {
-        const rt = b.rally.t ? this.get(b.rally.t) : null;
-        if (rt && rt.hp > 0) {
-          if (rt.kind === 'b' && rt.owner === p && u.type === 'citizen') u.ord = { k: 'work', t: rt.id };
-          else if (this.enemy(p, rt.owner)) u.ord = { k: 'attack', t: rt.id };
-        } else if (b.rally.x != null) {
-          u.ord = { k: 'move', x: b.rally.x, y: b.rally.y, am: u.type !== 'citizen' };
-        }
-      }
-      this.event({ type: 'trained', p, id: u.id, utype: u.type });
+      const n = UNITS[it.type].batch || 1; // Taiwan's scooters come three at a time
+      for (let i = 0; i < n; i++) this.spawnUnit(b, it.type);
     } else if (it.k === 'age') {
       pl.age++;
       delete pl.pending.age;
@@ -925,6 +959,23 @@ export class World {
     }
   }
 
+  spawnUnit(b, type) {
+    const p = b.owner;
+    const spot = this.spawnSpot(b);
+    const u = this.addUnit(type, p, spot[0], spot[1]);
+    this.popNow[p]++;
+    if (b.rally) {
+      const rt = b.rally.t ? this.get(b.rally.t) : null;
+      if (rt && rt.hp > 0) {
+        if (rt.kind === 'b' && rt.owner === p && u.type === 'citizen') u.ord = { k: 'work', t: rt.id };
+        else if (this.enemy(p, rt.owner)) u.ord = { k: 'attack', t: rt.id };
+      } else if (b.rally.x != null) {
+        u.ord = { k: 'move', x: b.rally.x, y: b.rally.y, am: u.type !== 'citizen' };
+      }
+    }
+    this.event({ type: 'trained', p, id: u.id, utype: u.type });
+  }
+
   spawnSpot(b) {
     // Prefer the side facing the rally point, else below the building.
     let tx = b.x + Math.floor(b.size / 2), ty = b.y + b.size;
@@ -940,10 +991,10 @@ export class World {
   cityIncome() {
     for (const b of this.s.blds) {
       if (b.type !== 'city' || !b.done || b.hp <= 0) continue;
-      const pl = this.s.players[b.owner];
+      const pl = this.s.players[b.owner], m = nbonus(pl, 'cityIncome') || 1;
       for (const k in CITY_INCOME) {
-        pl.res[k] += CITY_INCOME[k] * DT;
-        this.rates[b.owner][k] += CITY_INCOME[k];
+        pl.res[k] += CITY_INCOME[k] * m * DT;
+        this.rates[b.owner][k] += CITY_INCOME[k] * m;
       }
     }
   }
@@ -957,10 +1008,23 @@ export class World {
         const o = this.terrAt(u.x, u.y);
         if (o >= 0 && this.enemy(o, u.owner)) {
           const pl = s.players[u.owner];
-          const mul = 1 - techSum(pl, 'attrition');
+          // Logistics and K2 Climbers make it hurt less. Karaoke Night makes it hurt more.
+          const mul = (1 - techSum(pl, 'attrition')) * (1 - nbonus(pl, 'attrition')) * (this.karaoke[o] ? 2 : 1);
           u.hp -= this.uMax(u) * ATTRITION * mul * 0.5;
           u.attr = s.tick;
+        } else if (o === u.owner && s.players[o].techs.seven11) {
+          // 7-Eleven on Every Corner: heal 1.5% a second at home.
+          u.hp = Math.min(this.uMax(u), u.hp + this.uMax(u) * 0.0075);
         }
+      }
+      // Battle Jeepneys bring lunch: nearby own units heal 3% a second.
+      for (const j of s.units) {
+        if (j.hp <= 0 || UNITS[j.type].support !== 'heal') continue;
+        this.unitsNear(j.x, j.y, 3.5, (o) => {
+          if (o.owner !== j.owner || o === j || o.hp <= 0) return;
+          const dx = o.x - j.x, dy = o.y - j.y;
+          if (dx * dx + dy * dy <= 12.25) { const m = this.uMax(o); if (o.hp < m) { o.hp = Math.min(m, o.hp + m * 0.015); o.healT = s.tick; } }
+        });
       }
     }
     // Fallout zones.
@@ -1013,7 +1077,7 @@ export class World {
     for (const b of s.blds) {
       if (b.hp <= 0) continue;
       const d = this.edgeDist(m.x, m.y, b);
-      const maxHp = BLDS[b.type].hp;
+      const maxHp = this.bldMaxHp(b);
       if (d <= kr) {
         if (b.type === 'city') { b.hp = Math.min(b.hp, 1); b.lastAtk = m.owner; b.nuked = 1; }
         else { b.hp = 0; b.lastAtk = m.owner; }
@@ -1094,7 +1158,7 @@ export class World {
     if (!near) return false;
     const was = b.owner;
     this.s.players[by].st.caps++;
-    b.owner = by; b.hp = BLDS.city.hp * 0.25; b.q = []; b.rally = null; b.tgt = 0; b.lastAtk = -1;
+    b.owner = by; b.hp = this.bldHp('city', by) * 0.25; b.q = []; b.rally = null; b.tgt = 0; b.lastAtk = -1;
     // Anyone queued in the old owner's research is lost; clear pending flags they owned.
     this.event({ type: 'captured', p: by, from: was, id: b.id, x: cx, y: cy, name: b.name });
     // Stop the old owner's citizens working there.

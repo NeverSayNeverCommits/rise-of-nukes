@@ -4,6 +4,7 @@ import { hash2 } from './sim/rng.js';
 import { UNITS, BLDS, NUKE, cityRadius } from './sim/data.js';
 import { DT } from './sim/sim.js';
 import { bldSprite, tint } from './sprites.js';
+import { flagCanvas } from './flags.js';
 
 const TS = 32;     // pixels per tile in the cached terrain chunks
 const CHUNK = 16;  // tiles per chunk side
@@ -535,6 +536,17 @@ export class Renderer {
       const life = ((x1 - x0 + 6) / Math.abs(vx)) * 1000;
       for (let i = 0; i < 4 + Math.floor(Math.random() * 5); i++) this.part({ k: 'bird', x: sx - Math.sign(vx) * (i % 3) * 0.8, y: sy + (i - 2) * 0.6 + Math.random() * 0.4, vx, vy, life, ph: Math.random() * 6, layer: 2 });
     }
+    // music notes: bands, jeepneys, and karaoke cities at night
+    for (const u of w.s.units) {
+      if ((u.type !== 'oompah' && u.type !== 'jeepney') || u.x < x0 || u.x > x1 || u.y < y0 || u.y > y1 || !this.isVisible(u.x, u.y)) continue;
+      if (Math.random() < dt * 1.6) this.part({ k: 'emoji', e: Math.random() < 0.5 ? '🎵' : '🎶', x: u.x + (Math.random() - 0.5) * 0.6, y: u.y - 0.4, dx: (Math.random() - 0.5) * 1.5, hops: 1, life: 1400, size: 0.4, layer: 2 });
+    }
+    if (this.nightAmount() > 0.3) {
+      for (const b of w.s.blds) {
+        if (b.type !== 'city' || !b.done || !w.s.players[b.owner].techs.karaoke || b.x + 3 < x0 || b.x > x1 || b.y + 3 < y0 || b.y > y1 || !this.isVisible(b.x + 1.5, b.y + 1.5)) continue;
+        if (Math.random() < dt * 2.5) this.part({ k: 'emoji', e: ['🎤', '🎵', '🎶', '🎵'][Math.floor(Math.random() * 4)], x: b.x + 0.3 + Math.random() * 2.4, y: b.y + 0.5, dx: (Math.random() - 0.5) * 2, hops: 1, life: 1800, size: 0.5, layer: 2 });
+      }
+    }
     // plague of frogs
     if (w.s.mods && w.s.mods.food && Math.random() < dt * 6) {
       const x = x0 + Math.random() * (x1 - x0), y = y0 + 1 + Math.random() * (y1 - y0 - 2);
@@ -556,6 +568,8 @@ export class Renderer {
         case 'shot':
           if (!seen) break;
           if (e.melee) { this.fx.push({ k: 'spark', x: e.x2, y: e.y2, t0: now, d: 200 }); break; }
+          if (e.ut === 'bowler') { this.fx.push({ k: 'cricket', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 380 }); break; }
+          if (e.uq === 1 && e.ut === 'ranged') { this.fx.push({ k: 'pearls', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 220 }); break; }
           if (e.cls === 'sie') this.fx.push({ k: e.age >= 4 ? 'rocket' : 'ball', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: e.age >= 4 ? 700 : 550, boom: true, age: e.age });
           else if (e.cls === 'cav' && e.age >= 3) this.fx.push({ k: 'shell', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 160, boom: true });
           else if (e.age >= 2) this.fx.push({ k: 'bullet', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t0: now, d: 120 });
@@ -887,11 +901,13 @@ export class Renderer {
     if (b.type === 'city' && z >= 18) {
       const label = b.name || 'City';
       ctx.font = `bold ${Math.max(10, Math.round(z * 0.34))}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const tw = ctx.measureText(label).width + 10, th = Math.max(14, z * 0.48);
+      const th = Math.max(14, z * 0.48), fh = th * 0.62, fw = fh * 1.5;
+      const tw = ctx.measureText(label).width + 14 + fw;
       const lx = sx + S / 2, ly = sy - top - th * 0.2;
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; this.roundRect(ctx, lx - tw / 2, ly - th / 2, tw, th, th / 2); ctx.fill();
       ctx.strokeStyle = pl.color; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.fillText(label, lx, ly + 1);
+      ctx.drawImage(flagCanvas(pl.nation), lx - tw / 2 + th * 0.35, ly - fh / 2, fw, fh);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, lx + fw / 2 + 2, ly + 1);
     }
     if (b.type === 'silo' && b.stock > 0) {
       ctx.font = `bold ${Math.round(z * 0.45)}px system-ui`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
@@ -977,7 +993,9 @@ export class Renderer {
 
     ctx.lineWidth = Math.max(1, z * 0.05);
     ctx.strokeStyle = dark;
-    switch (d.cls) {
+    const st = w.stats(u.owner, u.type);
+    const special = st.uniq === 2 ? u.type : st.uniq === 1 ? `${pl.nation}:${u.type}` : null;
+    if (!(special && this.drawSpecial(ctx, special, u, sx, sy, r, fx, fy, col, dark, light, age, moving, now))) switch (d.cls) {
       case 'cit': {
         ctx.fillStyle = light;
         ctx.beginPath(); ctx.arc(sx, sy + bob, r, 0, TAU); ctx.fill(); ctx.stroke();
@@ -1061,6 +1079,12 @@ export class Renderer {
         break;
       }
     }
+    if (special) this.specialExtras(ctx, special, u, sx, sy, r, fx, fy, pl.nation, now);
+    // being healed by a jeepney
+    if (u.healT && w.s.tick - u.healT < 12 && z >= 16) {
+      ctx.fillStyle = 'rgba(80,255,120,0.9)'; ctx.font = `bold ${Math.round(z * 0.3)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('+', sx - r * 1.2, sy - r * (0.8 + ((now / 600) % 1) * 0.6));
+    }
     // veteran stars
     if (u.rank) {
       ctx.font = `bold ${Math.max(8, Math.round(z * 0.28))}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -1074,6 +1098,149 @@ export class Renderer {
     if (u.attr && w.s.tick - u.attr < 12 && z >= 20 && w.ally(this.me, u.owner)) {
       ctx.fillStyle = 'rgba(255,90,90,0.9)'; ctx.font = `${Math.round(z * 0.3)}px system-ui`; ctx.textAlign = 'center';
       ctx.fillText('↓', sx + r * 1.3, sy - r);
+    }
+  }
+
+  // Nation units with their own look. Returns false to use the normal drawing.
+  drawSpecial(ctx, k, u, sx, sy, r, fx, fy, col, dark, light, age, moving, now) {
+    const z = this.cam.z, ang = Math.atan2(fy, fx);
+    const lw = Math.max(1, z * 0.05);
+    switch (k) {
+      case 'oompah': {
+        // a band member with a huge brass tuba (or a DJ with headphones in the Atomic Age)
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#e8c39e'; ctx.beginPath(); ctx.arc(sx, sy - r * 0.15, r * 0.42, 0, TAU); ctx.fill();
+        if (age >= 4) {
+          ctx.strokeStyle = '#111'; ctx.lineWidth = Math.max(1.5, z * 0.07);
+          ctx.beginPath(); ctx.arc(sx, sy - r * 0.2, r * 0.55, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+          ctx.fillStyle = '#111'; ctx.fillRect(sx - r * 0.65, sy - r * 0.3, r * 0.22, r * 0.35); ctx.fillRect(sx + r * 0.43, sy - r * 0.3, r * 0.22, r * 0.35);
+          // turntable in front
+          const tx = sx + fx * r * 1.1, ty = sy + fy * r * 1.1 + r * 0.2;
+          ctx.fillStyle = '#333'; ctx.fillRect(tx - r * 0.6, ty - r * 0.25, r * 1.2, r * 0.5);
+          ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(tx, ty, r * 0.22, 0, TAU); ctx.fill();
+          ctx.strokeStyle = `hsl(${(now / 5) % 360},90%,60%)`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(tx, ty, r * 0.22, now / 100, now / 100 + 1); ctx.stroke();
+        } else {
+          // Tyrolean hat with a feather
+          ctx.fillStyle = '#2f5d34'; ctx.beginPath(); ctx.ellipse(sx, sy - r * 0.45, r * 0.55, r * 0.2, 0, 0, TAU); ctx.fill();
+          ctx.fillRect(sx - r * 0.28, sy - r * 0.8, r * 0.56, r * 0.35);
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(sx + r * 0.2, sy - r * 0.7); ctx.quadraticCurveTo(sx + r * 0.7, sy - r * 1.3, sx + r * 0.5, sy - r * 1.5); ctx.stroke();
+          // tuba: gold bell beside them, pumping in time
+          const pump = 1 + Math.sin(now / 160 + u.id) * 0.08;
+          const bx = sx - fy * r * 0.9, by = sy + fx * r * 0.9 - r * 0.6;
+          ctx.strokeStyle = '#b8860b'; ctx.lineWidth = Math.max(2, z * 0.1);
+          ctx.beginPath(); ctx.arc(sx - fy * r * 0.5, sy + fx * r * 0.5, r * 0.55, 0, TAU); ctx.stroke();
+          const g = ctx.createRadialGradient(bx, by, 0, bx, by, r * 0.7 * pump);
+          g.addColorStop(0, '#5a4000'); g.addColorStop(0.5, '#ffd700'); g.addColorStop(1, '#b8860b');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bx, by, r * 0.7 * pump, 0, TAU); ctx.fill();
+        }
+        return true;
+      }
+      case 'scooter': {
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(ang);
+        ctx.fillStyle = '#111';
+        ctx.beginPath(); ctx.ellipse(r * 0.95, 0, r * 0.35, r * 0.18, 0, 0, TAU); ctx.ellipse(-r * 0.95, 0, r * 0.35, r * 0.18, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = col; ctx.strokeStyle = dark; ctx.lineWidth = lw;
+        ctx.beginPath(); ctx.ellipse(0, 0, r * 1.05, r * 0.38, 0, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ccc'; ctx.fillRect(r * 0.75, -r * 0.55, r * 0.12, r * 1.1); // handlebar
+        ctx.fillStyle = light; ctx.beginPath(); ctx.arc(-r * 0.15, 0, r * 0.45, 0, TAU); ctx.fill(); ctx.stroke(); // helmet
+        ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(r * 0.05, -r * 0.2, r * 0.15, r * 0.4);
+        ctx.restore();
+        if (moving && Math.random() < 0.15) this.part({ k: 'smoke', x: u.x - fx * 0.35, y: u.y - fy * 0.35, vx: -fx * 0.3, vy: -0.2, life: 500, size: 0.07, col: 'rgba(200,200,200,A)', layer: 1 });
+        return true;
+      }
+      case 'jeepney': {
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(ang);
+        const L = r * 1.5, Wd = r * 0.75;
+        ctx.fillStyle = '#111'; for (const [wx, wy] of [[L * 0.6, -Wd], [L * 0.6, Wd], [-L * 0.6, -Wd], [-L * 0.6, Wd]]) { ctx.beginPath(); ctx.ellipse(wx, wy, r * 0.25, r * 0.12, 0, 0, TAU); ctx.fill(); }
+        ctx.fillStyle = '#d7dadd'; ctx.strokeStyle = '#555'; ctx.lineWidth = lw;
+        ctx.beginPath(); ctx.rect(-L, -Wd, L * 2, Wd * 2); ctx.fill(); ctx.stroke();
+        // stripes in every colour, plus yours
+        const stripes = ['#e63946', '#ffd60a', '#1d4ed8', col, '#2a9d8f'];
+        stripes.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(-L * 0.95, -Wd + (i + 0.5) * (Wd * 2) / (stripes.length + 1), L * 1.5, Wd * 0.18); });
+        ctx.fillStyle = col; ctx.fillRect(-L * 0.9, -Wd * 0.55, L * 1.4, Wd * 1.1); // roof
+        ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(-L * 0.9, -Wd * 0.55, L * 1.4, Wd * 0.25);
+        ctx.fillStyle = '#9aa0a6'; ctx.fillRect(L * 0.55, -Wd * 0.9, L * 0.4, Wd * 1.8); // bonnet
+        ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(L * 0.8, 0, r * 0.13, 0, TAU); ctx.fill(); // the chrome horse. Well, a gold blob.
+        ctx.fillStyle = '#fff'; ctx.fillRect(L * 0.95, -Wd * 0.75, r * 0.1, r * 0.2); ctx.fillRect(L * 0.95, Wd * 0.75 - r * 0.2, r * 0.1, r * 0.2);
+        ctx.restore();
+        return true;
+      }
+      case 'bowler': {
+        // cricket whites, a cap in team colour, and a red ball in hand
+        ctx.fillStyle = '#f4f4f0'; ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, z * 0.07);
+        ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#e8c39e'; ctx.beginPath(); ctx.arc(sx, sy - r * 0.1, r * 0.42, 0, TAU); ctx.fill();
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(sx, sy - r * 0.3, r * 0.42, Math.PI, TAU); ctx.fill();
+        ctx.fillRect(sx + (fx >= 0 ? 0 : -r * 0.7), sy - r * 0.34, r * 0.7, r * 0.12);
+        const cdLeft = u.cd / this.world.stats(u.owner, u.type).cd;
+        const swing = cdLeft > 0.85 ? (1 - cdLeft) / 0.15 * Math.PI : 0; // windmill arm right after a throw
+        const ax = sx - fy * r * 0.8, ay = sy + fx * r * 0.8;
+        const hx = ax + Math.cos(ang - Math.PI / 2 + swing) * r * 0.7, hy = ay + Math.sin(ang - Math.PI / 2 + swing) * r * 0.7;
+        ctx.strokeStyle = '#e8c39e'; ctx.lineWidth = Math.max(1.5, z * 0.07); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(hx, hy); ctx.stroke();
+        if (cdLeft < 0.5) { ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(hx, hy, Math.max(1.5, r * 0.2), 0, TAU); ctx.fill(); }
+        return true;
+      }
+      case 'germany:infantry': {
+        // Landsknecht: puffy striped clothes, a giant feathered hat and a sword taller than him
+        const sw = Math.sin(now / 200 + u.id) * 0.15;
+        const sa = ang + 0.5 + sw;
+        ctx.strokeStyle = '#d8dde3'; ctx.lineWidth = Math.max(2, z * 0.09);
+        ctx.beginPath(); ctx.moveTo(sx - Math.cos(sa) * r * 0.5, sy - Math.sin(sa) * r * 0.5); ctx.lineTo(sx + Math.cos(sa) * r * 2.4, sy + Math.sin(sa) * r * 2.4); ctx.stroke();
+        ctx.strokeStyle = '#6b4423'; ctx.beginPath(); ctx.moveTo(sx - Math.cos(sa + 1.57) * r * 0.4 + Math.cos(sa) * r * 0.3, sy - Math.sin(sa + 1.57) * r * 0.4 + Math.sin(sa) * r * 0.3); ctx.lineTo(sx + Math.cos(sa + 1.57) * r * 0.4 + Math.cos(sa) * r * 0.3, sy + Math.sin(sa + 1.57) * r * 0.4 + Math.sin(sa) * r * 0.3); ctx.stroke();
+        for (let i = 0; i < 6; i++) { ctx.fillStyle = i % 2 ? '#ffce00' : col; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.arc(sx, sy, r, (i / 6) * TAU, ((i + 1) / 6) * TAU); ctx.fill(); }
+        ctx.strokeStyle = dark; ctx.lineWidth = Math.max(1, z * 0.04); ctx.beginPath(); ctx.arc(sx, sy, r, 0, TAU); ctx.stroke();
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(sx, sy - r * 0.2, r * 0.75, r * 0.38, -0.2, 0, TAU); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1.5, z * 0.06);
+        ctx.beginPath(); ctx.moveTo(sx + r * 0.2, sy - r * 0.4); ctx.quadraticCurveTo(sx + r * 1.0, sy - r * 1.2, sx + r * 0.2, sy - r * 1.5); ctx.stroke();
+        ctx.strokeStyle = '#e63946'; ctx.beginPath(); ctx.moveTo(sx - r * 0.1, sy - r * 0.4); ctx.quadraticCurveTo(sx + r * 0.4, sy - r * 1.4, sx - r * 0.4, sy - r * 1.4); ctx.stroke();
+        return true;
+      }
+      case 'pakistan:siege': {
+        // Jingle truck: a cab, a tall painted crest, chains of bells, and a gun on the back
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(ang);
+        const L = r * 1.35, Wd = r * 0.75;
+        ctx.fillStyle = '#111'; for (const wx of [L * 0.6, -L * 0.2, -L * 0.7]) for (const wy of [-Wd, Wd]) { ctx.beginPath(); ctx.ellipse(wx, wy, r * 0.22, r * 0.11, 0, 0, TAU); ctx.fill(); }
+        // cargo bed with painted panels
+        const cols = ['#e63946', '#ffd60a', '#06d6a0', '#118ab2', '#ef476f', col];
+        for (let i = 0; i < 6; i++) { ctx.fillStyle = cols[(i + u.id) % 6]; ctx.fillRect(-L + (i * L * 1.4) / 6, -Wd, (L * 1.4) / 6 + 0.5, Wd * 2); }
+        ctx.strokeStyle = '#ffd700'; ctx.lineWidth = Math.max(1, z * 0.04); ctx.strokeRect(-L, -Wd, L * 1.4, Wd * 2);
+        // the crest over the cab
+        ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(L * 0.4, -Wd * 1.05); ctx.lineTo(L * 0.62, 0); ctx.lineTo(L * 0.4, Wd * 1.05); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#2a9d8f'; ctx.fillRect(L * 0.45, -Wd * 0.8, L * 0.55, Wd * 1.6); // cab
+        ctx.fillStyle = '#9fd3ff'; ctx.fillRect(L * 0.8, -Wd * 0.6, L * 0.12, Wd * 1.2);
+        // bells along the sides
+        ctx.fillStyle = '#ffd700';
+        for (let i = 0; i < 7; i++) { const bx = -L + (i * L * 1.4) / 6, j = Math.sin(now / 90 + i + u.id) * r * 0.05; ctx.beginPath(); ctx.arc(bx, -Wd - r * 0.1 + j, r * 0.07, 0, TAU); ctx.arc(bx, Wd + r * 0.1 - j, r * 0.07, 0, TAU); ctx.fill(); }
+        // weapon
+        ctx.fillStyle = '#333';
+        if (age >= 4) { for (let i = -1; i <= 1; i++) ctx.fillRect(-L * 0.7, i * r * 0.28 - r * 0.09, r * 1.1, r * 0.18); }
+        else ctx.fillRect(-L * 0.6, -r * 0.13, r * 1.4, r * 0.26);
+        ctx.restore();
+        return true;
+      }
+    }
+    return false; // Leopard, Bubble Tea Gunner, Mactan Warrior: normal body, extras added after
+  }
+
+  // Small extras on top of nation units: a tiny flag, and a prop.
+  specialExtras(ctx, k, u, sx, sy, r, fx, fy, nation, now) {
+    const z = this.cam.z;
+    if (k === 'taiwan:ranged') { // a bubble tea in hand
+      const cx = sx - fy * r * 0.9, cy = sy + fx * r * 0.9;
+      ctx.fillStyle = 'rgba(230,200,160,0.95)'; ctx.fillRect(cx - r * 0.2, cy - r * 0.35, r * 0.4, r * 0.55);
+      ctx.fillStyle = '#2b1a10'; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(cx - r * 0.1 + i * r * 0.1, cy + r * 0.12, Math.max(1, r * 0.06), 0, TAU); ctx.fill(); }
+      ctx.strokeStyle = '#e63946'; ctx.lineWidth = Math.max(1, z * 0.04); ctx.beginPath(); ctx.moveTo(cx + r * 0.05, cy - r * 0.35); ctx.lineTo(cx + r * 0.15, cy - r * 0.65); ctx.stroke();
+    }
+    if (k === 'philippines:infantry') { // red headband, tails flying
+      ctx.strokeStyle = '#e63946'; ctx.lineWidth = Math.max(1.5, z * 0.06);
+      ctx.beginPath(); ctx.arc(sx, sy, r * 0.5, 0, TAU); ctx.stroke();
+      const wv = Math.sin(now / 120 + u.id) * r * 0.2;
+      ctx.beginPath(); ctx.moveTo(sx - fx * r * 0.5, sy - fy * r * 0.5); ctx.lineTo(sx - fx * r * 1.1 - fy * wv, sy - fy * r * 1.1 + fx * wv); ctx.stroke();
+    }
+    if (z >= 22) { // a tiny national flag on a stick
+      const fh = Math.max(5, z * 0.16), fw = fh * 1.5, px = sx + r * 0.9, py = sy - r * 1.9;
+      ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px, sy - r * 0.6); ctx.lineTo(px, py); ctx.stroke();
+      ctx.drawImage(flagCanvas(nation), px, py, fw, fh);
     }
   }
 
@@ -1255,6 +1422,24 @@ export class Renderer {
           } else {
             ctx.fillStyle = f.age >= 2 ? '#222' : '#776655';
             ctx.beginPath(); ctx.arc(px, py, z * 0.15, 0, TAU); ctx.fill();
+          }
+          break;
+        }
+        case 'cricket': { // a red cricket ball that bounces once before it hits
+          const [tx, ty] = this.toScreen(f.x2, f.y2);
+          const bt = 0.7, h = t < bt ? Math.sin((t / bt) * Math.PI) * z * 0.6 : Math.sin(((t - bt) / (1 - bt)) * Math.PI) * z * 0.35;
+          const px = sx + (tx - sx) * t, py = sy + (ty - sy) * t - h;
+          ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(sx + (tx - sx) * t, sy + (ty - sy) * t, z * 0.1, z * 0.05, 0, 0, TAU); ctx.fill();
+          ctx.fillStyle = '#c0141c'; ctx.beginPath(); ctx.arc(px, py, Math.max(2, z * 0.1), 0, TAU); ctx.fill();
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(px, py, Math.max(2, z * 0.1), -0.6, 0.6); ctx.stroke();
+          break;
+        }
+        case 'pearls': { // tapioca pearls
+          const [tx, ty] = this.toScreen(f.x2, f.y2);
+          ctx.fillStyle = '#2b1a10';
+          for (let i = 0; i < 3; i++) {
+            const tt = Math.max(0, Math.min(1, t * 1.2 - i * 0.1));
+            ctx.beginPath(); ctx.arc(sx + (tx - sx) * tt, sy + (ty - sy) * tt - Math.sin(tt * Math.PI) * z * 0.2, Math.max(1.5, z * 0.07), 0, TAU); ctx.fill();
           }
           break;
         }

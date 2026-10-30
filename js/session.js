@@ -9,9 +9,10 @@
 //    the game state to fix it.
 import { World, TICK_MS, defaultSettings } from './sim/sim.js';
 import { PLAYER_COLORS } from './sim/data.js';
+import { NATION_KEYS } from './sim/nations.js';
 import { HostNet, ClientNet } from './net.js';
 
-export const VERSION = 2;
+export const VERSION = 3;
 const HASH_EVERY = 100; // ticks (5 seconds)
 export const MAX_PLAYERS = 8;
 
@@ -53,7 +54,7 @@ export class Session {
   // ---------- host / solo ----------
 
   host() {
-    this.lobby.players = [{ name: this.name, color: PLAYER_COLORS[0], team: 0, conn: null, online: true }];
+    this.lobby.players = [{ name: this.name, color: PLAYER_COLORS[0], team: 0, nation: localStorage.getItem('ron-nation') || 'random', conn: null, online: true }];
     if (this.mode === 'solo') { this.ui.onLobby(this.publicLobby(), 0); return; }
     this.net = new HostNet({
       onReady: (code) => { this.code = code; this.ui.onStatus(`Room ready. Code: ${code}`); this.ui.onLobby(this.publicLobby(), 0); },
@@ -67,7 +68,7 @@ export class Session {
   publicLobby() {
     return {
       code: this.code,
-      players: this.lobby.players.map((p) => ({ name: p.name, color: p.color, team: p.team, online: p.online })),
+      players: this.lobby.players.map((p) => ({ name: p.name, color: p.color, team: p.team, nation: p.nation, online: p.online })),
       settings: this.lobby.settings,
       started: !!this.world,
     };
@@ -108,7 +109,8 @@ export class Session {
         const color = PLAYER_COLORS.find((c) => !used.has(c)) || PLAYER_COLORS[0];
         const usedTeams = new Set(this.lobby.players.map((p) => p.team));
         let team = 0; while (usedTeams.has(team)) team++;
-        this.lobby.players.push({ name: nm, color, team, conn: cid, online: true });
+        const nation = NATION_KEYS.includes(msg.nation) ? msg.nation : 'random';
+        this.lobby.players.push({ name: nm, color, team, nation, conn: cid, online: true });
         this.sys(`${nm} joined.`);
         this.pushLobby();
         return;
@@ -161,6 +163,7 @@ export class Session {
     if (!p) return;
     if (typeof v.color === 'string' && PLAYER_COLORS.includes(v.color)) p.color = v.color;
     if (Number.isInteger(v.team) && v.team >= 0 && v.team < MAX_PLAYERS) p.team = v.team;
+    if (v.nation === 'random' || NATION_KEYS.includes(v.nation)) p.nation = v.nation;
     this.pushLobby();
   }
 
@@ -188,7 +191,11 @@ export class Session {
     const seed = (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) | 1;
     const setup = {
       seed,
-      players: this.lobby.players.map((p) => ({ name: p.name, color: p.color, team: p.team })),
+      // 'Random' is decided here, on the host, so everyone gets the same answer.
+      players: this.lobby.players.map((p) => ({
+        name: p.name, color: p.color, team: p.team,
+        nation: NATION_KEYS.includes(p.nation) ? p.nation : NATION_KEYS[Math.floor(Math.random() * NATION_KEYS.length)],
+      })),
       settings: { ...this.lobby.settings },
     };
     this.lobby.players.forEach((p, i) => { if (p.conn) this.net.send(p.conn, { t: 'start', setup, you: i }); });
@@ -279,7 +286,7 @@ export class Session {
   join(code) {
     this.code = code.toUpperCase();
     this.net = new ClientNet(this.code, {
-      onOpen: () => { this.net.send({ t: 'hello', name: this.name, v: VERSION }); this.ui.onStatus('Connected. Waiting for the host…'); },
+      onOpen: () => { this.net.send({ t: 'hello', name: this.name, v: VERSION, nation: localStorage.getItem('ron-nation') || 'random' }); this.ui.onStatus('Connected. Waiting for the host…'); },
       onMessage: (msg) => this.clientMsg(msg),
       onClose: () => this.ui.onDisconnected(),
       onError: (t) => this.ui.onError(t),

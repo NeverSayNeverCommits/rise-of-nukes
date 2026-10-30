@@ -34,8 +34,9 @@
           <li>Build more cities to grow your <b>territory</b>. You can only build inside your borders. Enemy territory slowly hurts your units.</li>
           <li>Destroy an enemy city with soldiers nearby to <b>capture it</b>. Lose all your cities and you are out.</li>
           <li>In the <b>Atomic Age</b>, research the Manhattan Project at a Library, build a Missile Silo, build a nuke, and launch it. Watch the <b>Doomsday Clock</b>: too many nukes and everyone loses.</li>
+          <li>Pick a <b>nation</b> in the lobby: Germany, Taiwan, Philippines or Pakistan. Each has a national power, unique units, a signature unit and a national tech.</li>
           <li>Watch out for cows, supply crates, meteors, frogs and other surprises. Kill cows for food. Do not let cows walk into nuclear fallout.</li>
-          <li>Type a number (1-25) in chat to send a spoken taunt. Try 11, 14 and 22.</li>
+          <li>Type a number (1-29) in chat to send a spoken taunt. Try 11, 14 and 22.</li>
           <li>Keys: arrow keys / screen edge / middle-drag to scroll, mouse wheel to zoom, <b>A</b> attack-move, <b>S</b> stop, <b>H</b> home, <b>.</b> next idle citizen, <b>Ctrl+1-9</b> make group, <b>1-9</b> select group, <b>Enter</b> chat, <b>Space</b> last alert.</li>
         </ul>
       </details>
@@ -50,7 +51,8 @@
         <div>Room code: <span id="room-code" class="code">…</span></div>
         <button id="btn-copy" class="small">Copy invite link</button>
       </div>
-      <table id="player-table"><thead><tr><th>Player</th><th>Colour</th><th>Team</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="player-table"><thead><tr><th>Player</th><th>Nation</th><th>Colour</th><th>Team</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="nation-card" class="nation-card"></div>
       <div class="settings" id="settings">
         <label>Map size
           <select data-set="mapSize"><option value="small">Small</option><option value="normal">Normal</option><option value="large">Large</option></select>
@@ -98,7 +100,7 @@
     <div id="alerts"></div>
     <div id="nuke-flash"></div>
     <div id="chat-log" class="log"></div>
-    <input id="chat-input" class="hidden" placeholder="Chat (Enter to send, Esc to cancel). Type 1-25 for a taunt." maxlength="200">
+    <input id="chat-input" class="hidden" placeholder="Chat (Enter to send, Esc to cancel). Type 1-29 for a taunt." maxlength="200">
     <div id="bottombar">
       <canvas id="minimap" width="200" height="200"></canvas>
       <div id="sel-info"></div>

@@ -154,3 +154,19 @@ input[type=range] { padding: 0; accent-color: #ffcc33; }
 .award:nth-child(5) { animation-delay: .4s; } .award:nth-child(6) { animation-delay: .5s; } .award:nth-child(7) { animation-delay: .6s; }
 #over-title { font-size: 44px; letter-spacing: 4px; text-shadow: 0 0 20px #ffcc3388; }
 #chat-log i { color: #ffcc33; }
+
+/* ---------- nations ---------- */
+img.flag { vertical-align: middle; border-radius: 2px; box-shadow: 0 0 0 1px #0006; margin-right: 4px; }
+.nat { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.natname { font-weight: normal; font-size: 0.8em; color: #9aa4ad; }
+#sel-info .stats.uniq { color: #ffd76a; font-style: italic; }
+.nation-card {
+  margin: 10px 0; padding: 10px 14px; border-radius: 10px; text-align: left;
+  background: linear-gradient(135deg, #ffffff10, #ffffff05); border: 1px solid #ffffff22;
+}
+.nation-card h3 { margin: 0 0 2px; display: flex; align-items: center; gap: 6px; }
+.nation-card .motto { color: #ffd76a; font-style: italic; margin-bottom: 6px; }
+.nation-card .nat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; font-size: 0.88em; }
+.nation-card ul { margin: 2px 0 6px; padding-left: 18px; }
+.nation-card li { margin: 2px 0; }
+@media (max-width: 700px) { .nation-card .nat-grid { grid-template-columns: 1fr; } }

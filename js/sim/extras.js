@@ -1,7 +1,8 @@
 // The silly stuff: cows, mutant cows, supply crates, random events and meteors.
 // This is part of the simulation, so the same rules apply: deterministic only (use w.rand()).
 import { T } from './map.js';
-import { UNITS, TECHS, TECH_ORDER } from './data.js';
+import { UNITS, TECHS, TECH_ORDER, forNation } from './data.js';
+import { nbonus } from './nations.js';
 
 const DT = 0.05;
 const SEC = 20; // ticks per second
@@ -147,7 +148,7 @@ export function updateExtras(w) {
       const by = c.hitBy;
       let food = 0;
       if (by != null && by >= 0 && s.players[by]) {
-        food = c.mutant ? MUTANT.food : COW.food;
+        food = (c.mutant ? MUTANT.food : COW.food) * (nbonus(s.players[by], 'cowFood') || 1);
         s.players[by].res.food += food;
         s.players[by].st.cows++;
       }
@@ -214,7 +215,7 @@ function openCrate(w, cr, p) {
     }
     Object.assign(e, { kind: 'units', utype: type });
   } else if (r < 0.75) {
-    const opts = TECH_ORDER.filter((t) => !pl.techs[t] && !pl.pending[t] && TECHS[t].age <= pl.age && (!TECHS[t].req || pl.techs[TECHS[t].req]) && t !== 'manhattan' && t !== 'sdi');
+    const opts = TECH_ORDER.filter((t) => !pl.techs[t] && !pl.pending[t] && TECHS[t].age <= pl.age && (!TECHS[t].req || pl.techs[TECHS[t].req]) && forNation(pl, TECHS[t]) && t !== 'manhattan' && t !== 'sdi');
     if (opts.length) {
       const t = opts[Math.floor(w.rand() * opts.length)];
       pl.techs[t] = 1;
