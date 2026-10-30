@@ -1,0 +1,11 @@
+{
+  "name": "rise-of-nukes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny Rise of Nations style RTS for the browser. Peer-to-peer multiplayer, hosted on GitHub Pages.",
+  "scripts": {
+    "test": "node test/sim.test.js",
+    "serve": "python3 -m http.server 8080"
+  }
+}

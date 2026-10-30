@@ -1,0 +1,110 @@
+# ☢️ Rise of Nukes
+
+A small, browser-based tribute to *Rise of Nations*. Gather resources, advance through 5 ages, grow your borders with new cities, build an army, capture your friends' cities, and when diplomacy fails, nuke them.
+
+It runs entirely in the browser. You don't need a server: host it free on GitHub Pages, and players connect to each other directly (peer-to-peer).
+
+## Play
+
+1. Open the game page.
+2. One person clicks **Host game** and shares the 5-letter room code, or the invite link.
+3. Everyone else types the code and clicks **Join game**.
+4. In the lobby, pick colours and teams. Same team = allies. The host picks the settings and clicks **Start game**.
+
+**Practice alone** starts a game with just you. Use it to learn the controls or try things out. Set *Start age: Atomic* and *Start resources: Insane* to go straight to the nukes.
+
+### Basics
+
+| | |
+|---|---|
+| **Gather** | Citizens build farms (near a city), woodcutter's camps (next to forest), mines (on grey metal rocks) and, from the Industrial Age, oil wells (on black oil pools). Right-click a building with citizens to work there. 5 workers per building. |
+| **Ages** | Ancient → Classical → Gunpowder → Industrial → Atomic. Advance at a city. Units upgrade automatically: spearmen become riflemen, horsemen become tanks, catapults become rocket artillery. |
+| **Tech** | The Library researches better gathering, Civics (more population and cities), attack and armour upgrades, and the Manhattan Project. |
+| **Territory** | Cities claim land. You can only build inside your borders. Enemy territory slowly damages your units. More cities = more land. City limit goes up with each age. |
+| **Army** | Infantry beats cavalry, ranged beats infantry, cavalry beats ranged and siege, siege wrecks buildings. Towers and cities shoot back. |
+| **Conquest** | Bring a city to 0 HP with soldiers nearby to capture it. Lose all your cities and you're out. Last team standing wins. |
+| **Nukes** | Atomic Age → research **Manhattan Project** at a Library → build a **Missile Silo** → build a nuke → **Launch** and click a target anywhere. Everyone gets a warning and a countdown. Missile Defense gives a 50% chance to shoot down nukes aimed at your land. |
+| **Doomsday Clock** | Every nuke moves the clock. When it reaches the limit set in the lobby, everybody loses. |
+
+### Controls
+
+| Key / mouse | Action |
+|---|---|
+| Left-click / drag | Select / box select |
+| Double-click | Select all of that type on screen |
+| Right-click | Move, attack, work, or set a rally point for buildings |
+| Arrow keys, screen edge, middle-drag, minimap | Scroll |
+| Mouse wheel | Zoom |
+| Letters shown on buttons | Build, train or research (Shift+click a train button = 5 units) |
+| A / S | Attack-move / Stop |
+| H | Jump to your cities |
+| . | Next idle citizen |
+| Ctrl+1–9, 1–9 | Make / select control group (press twice to jump there) |
+| Space | Jump to the last alert |
+| Enter | Chat |
+| M | Mute sound |
+| Esc | Cancel / menu |
+
+## Put it on GitHub Pages
+
+1. Create a new repository on GitHub, for example `rise-of-nukes`.
+2. Push this folder to it:
+   ```bash
+   git remote add origin https://github.com/<you>/rise-of-nukes.git
+   git push -u origin main
+   ```
+3. On GitHub, open the repository's **Settings → Pages**. Under *Build and deployment*, choose **Deploy from a branch**, branch `main`, folder `/ (root)`, then **Save**.
+4. After a minute the game will be at `https://<you>.github.io/rise-of-nukes/`.
+
+There is no build step. The files are served as they are.
+
+## How the multiplayer works
+
+- The host's browser is the hub. Other players connect to it over WebRTC using [PeerJS](https://peerjs.com/). PeerJS's free public server is only used to introduce the browsers to each other. Game traffic goes directly between players.
+- The game uses *lockstep*. Every browser runs the exact same simulation. Players only send their commands ("move these units there"). Every 50 ms the host bundles the commands into a "turn" and sends it to everyone. This uses very little bandwidth.
+- Every 5 seconds each player sends a checksum of their game state. If one ever differs, the host sends that player a full copy of the game to fix it.
+- If a player drops out, they can rejoin with the **same code and the same name**.
+
+**Limits to know about**
+
+- **The host must keep their tab open.** If the host leaves, the game ends. A background tab is fine.
+- Some strict networks (some office, school or mobile networks) block direct connections. If one player can't join, try a different person as host. If it keeps happening, a TURN relay server can be added in `js/net.js` (`iceServers`).
+- Up to 8 players. It's built and tested with 4 in mind.
+- Anyone could cheat from the browser console. It's a game for friends.
+
+## Develop
+
+```bash
+npm run serve      # serves on http://localhost:8080 (needs Python 3)
+npm test           # runs the headless simulation tests (needs Node 18+)
+```
+
+Any static file server works. Opening `index.html` straight from disk won't work, because browsers block ES modules on `file://`.
+
+### Code layout
+
+| File | What it does |
+|---|---|
+| `js/sim/data.js` | **All the game numbers**: units, buildings, techs, costs, ages. Start here to change balance. |
+| `js/sim/sim.js` | The deterministic game simulation (units, combat, territory, nukes). |
+| `js/sim/map.js` | Random map generator. |
+| `js/sim/path.js` | A* path finding. |
+| `js/session.js` | Lobby and lockstep game loop. |
+| `js/net.js` | PeerJS networking. |
+| `js/render.js` | Canvas drawing. |
+| `js/game.js` | Input, HUD and alerts. |
+| `js/main.js` | Menu and lobby screens. |
+
+**Important rule:** code under `js/sim/` must stay deterministic. Don't use `Math.random`, `Date`, `Math.sin`/`cos`/`atan2`/`hypot`/`pow`, or anything else that could give different results in different browsers. Use `+ - * /`, `Math.sqrt`, `Math.floor`, and the seeded RNG in `rng.js`. Otherwise players go out of sync. `npm test` checks that two copies of the game stay identical.
+
+## Ideas for next steps
+
+- AI opponents, so the group can play against bots together
+- Aircraft (fighters and bombers), and ships
+- Shift-queued orders, formations
+- Wonders and more nations with bonuses
+- Sprite art and music
+
+---
+
+Uses [PeerJS](https://github.com/peers/peerjs) (MIT), bundled in `js/vendor/`.
