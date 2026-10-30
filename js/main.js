@@ -205,7 +205,7 @@ $('set-night').addEventListener('change', (e) => {
 });
 $('set-wheel').addEventListener('change', (e) => localStorage.setItem('ron-wheel', e.target.value));
 $('set-edge').addEventListener('change', (e) => localStorage.setItem('ron-edge', e.target.checked ? '1' : '0'));
-$('btn-test-sound').addEventListener('click', () => { sfx.unlock(); sfx.play('moo', { v: 1 }); setTimeout(() => say('Moo. This is a test cow.', 1), 900); });
+$('btn-test-sound').addEventListener('click', () => { sfx.unlock(); sfx.play('moo', { v: 1 }); setTimeout(() => say('This is a test cow.', 1), 2000); });
 
 // A random silly line under the title.
 const TAGLINES = ['Now with 40% more cows.', 'Mutually assured entertainment.', 'The cows are not friendly. Well, most of them.',

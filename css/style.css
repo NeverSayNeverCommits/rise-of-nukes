@@ -102,7 +102,8 @@ td select { padding: 4px; }
 #chat-log .line { background: #0009; padding: 1px 6px; margin-top: 2px; border-radius: 3px; width: fit-content; max-width: 100%; animation: fade 12s forwards; }
 #chat-log.open .line { animation: none; opacity: 1; }
 .log .sys { color: #9aa4ad; font-style: italic; }
-#chat-input { position: absolute; left: 10px; bottom: 222px; width: 420px; z-index: 8; transform: translateY(28px); }
+#chat-input { position: absolute; left: 10px; bottom: 222px; width: 420px; z-index: 8; }
+#chat-log.open { bottom: 266px; }
 
 .overlay { position: absolute; inset: 0; z-index: 20; background: #000a; display: flex; align-items: center; justify-content: center; }
 .overlay .panel { min-width: 380px; max-width: 92vw; }
@@ -170,3 +171,16 @@ img.flag { vertical-align: middle; border-radius: 2px; box-shadow: 0 0 0 1px #00
 .nation-card ul { margin: 2px 0 6px; padding-left: 18px; }
 .nation-card li { margin: 2px 0; }
 @media (max-width: 700px) { .nation-card .nat-grid { grid-template-columns: 1fr; } }
+
+/* ---------- taunt picker ---------- */
+#taunts { position: absolute; left: 440px; bottom: 222px; width: min(600px, calc(100vw - 460px)); max-height: calc(100vh - 280px); z-index: 8; display: flex; flex-direction: column; background: #10141af2; border: 1px solid #ffcc3350; border-radius: 8px; padding: 6px; box-shadow: 0 4px 14px #0009; }
+#taunts.hidden { display: none; }
+.taunt-tip { color: #9aa4ad; font-size: 12px; padding: 2px 4px 6px; }
+.taunt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 3px; overflow-y: auto; scrollbar-width: thin; }
+.taunt { display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 6px; border-radius: 5px; background: #21262d; cursor: pointer; font-size: 13px; }
+.taunt:hover, .taunt.picked { background: #3a3220; }
+.taunt.exact { outline: 1px solid #ffcc33; }
+.taunt .num { color: #ffcc33; font-weight: bold; min-width: 20px; text-align: right; }
+.taunt .txt { flex: 1; }
+.taunt .hear { background: none; border: none; padding: 0 3px; font-size: 13px; cursor: pointer; box-shadow: none; opacity: .75; }
+.taunt .hear:hover { opacity: 1; }

@@ -93,6 +93,7 @@
         <span id="age-label"></span>
         <span id="doom" title="Doomsday Clock: when it hits the limit, everybody loses."></span>
         <span id="clock"></span>
+        <button id="btn-taunts" class="small secondary" title="Chat and taunts (Enter)">📣</button>
         <button id="btn-full" class="small secondary" title="Fullscreen (F9). Makes screen-edge scrolling work on all sides.">⛶</button>
         <button id="btn-sound" class="small secondary" title="Sound and display settings">🔊</button>
         <button id="btn-menu" class="small" title="Menu">☰</button>
@@ -101,7 +102,8 @@
     <div id="alerts"></div>
     <div id="nuke-flash"></div>
     <div id="chat-log" class="log"></div>
-    <input id="chat-input" class="hidden" placeholder="Chat (Enter to send, Esc to cancel). Type 1-29 for a taunt." maxlength="200">
+    <input id="chat-input" class="hidden" placeholder="Chat, or pick a taunt. Enter sends, Esc cancels." maxlength="200">
+    <div id="taunts" class="hidden"></div>
     <div id="bottombar">
       <canvas id="minimap" width="200" height="200"></canvas>
       <div id="sel-info"></div>

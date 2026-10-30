@@ -168,8 +168,24 @@ export class GameUI {
     const ci = $('chat-input');
     on(ci, 'keydown', (e) => {
       e.stopPropagation();
-      if (e.key === 'Enter') { this.session.sendChat(ci.value); ci.value = ''; this.closeChat(); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); this.moveTaunt(e.key === 'ArrowDown' ? 1 : -1); return; }
+      if (e.key === 'Enter') {
+        const pick = this.tauntPick;
+        if (pick) this.sendTaunt(pick);
+        else { this.session.sendChat(ci.value); ci.value = ''; this.closeChat(); }
+      }
       if (e.key === 'Escape') this.closeChat();
+    });
+    on(ci, 'input', () => { this.tauntPick = 0; this.renderTaunts(); });
+    on($('btn-taunts'), 'click', () => { if ($('chat-input').classList.contains('hidden')) this.openChat(); else this.closeChat(); });
+    const tl = $('taunts');
+    on(tl, 'mousedown', (e) => e.preventDefault()); // keep the cursor in the chat box
+    on(tl, 'click', (e) => {
+      const row = e.target.closest('.taunt');
+      if (!row) return;
+      sfx.unlock();
+      if (e.target.closest('.hear')) this.hearTaunt(+row.dataset.n);
+      else this.sendTaunt(+row.dataset.n);
     });
     on($('cmd-card'), 'mouseover', (e) => this.showTip(e));
     on($('cmd-card'), 'mouseout', () => $('tooltip').classList.add('hidden'));
@@ -192,11 +208,54 @@ export class GameUI {
     });
   }
 
-  openChat() { const ci = $('chat-input'); ci.classList.remove('hidden'); $('chat-log').classList.add('open'); ci.focus(); }
-  closeChat() { const ci = $('chat-input'); ci.classList.add('hidden'); $('chat-log').classList.remove('open'); ci.blur(); }
+  openChat() {
+    const ci = $('chat-input'); ci.classList.remove('hidden'); $('chat-log').classList.add('open'); ci.focus();
+    this.tauntPick = 0; this.renderTaunts();
+  }
+  closeChat() {
+    const ci = $('chat-input'); ci.classList.add('hidden'); $('chat-log').classList.remove('open'); ci.blur();
+    $('taunts').classList.add('hidden');
+  }
+
+  // The taunts that match what's typed in the chat box: by number ("1" finds 1, 10-19) or by words.
+  tauntMatches() {
+    const q = $('chat-input').value.trim().toLowerCase();
+    const all = Object.keys(TAUNTS).map(Number);
+    if (!q) return all;
+    return /^\d+$/.test(q) ? all.filter((n) => String(n).startsWith(q)) : all.filter((n) => TAUNTS[n].toLowerCase().includes(q));
+  }
+
+  renderTaunts() {
+    const box = $('taunts'), list = this.tauntMatches(), q = $('chat-input').value.trim();
+    box.classList.toggle('hidden', !list.length);
+    box.innerHTML = '<div class="taunt-tip">📣 Click to say it to everyone. 🔊 hears it first, only you. ↑↓ and Enter work too.</div><div class="taunt-list">'
+      + list.map((n) => `<div class="taunt ${n === this.tauntPick ? 'picked' : ''} ${q === String(n) ? 'exact' : ''}" data-n="${n}"><span class="num">${n}</span><span class="txt">${esc(TAUNTS[n])}</span><button class="hear" title="Hear it first (only you)">🔊</button></div>`).join('')
+      + '</div>';
+    const row = box.querySelector('.picked');
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  }
+
+  moveTaunt(step) {
+    const list = this.tauntMatches();
+    if (!list.length) return;
+    const i = list.indexOf(this.tauntPick);
+    this.tauntPick = list[i < 0 ? (step > 0 ? 0 : list.length - 1) : (i + step + list.length) % list.length];
+    this.renderTaunts();
+  }
+
+  sendTaunt(n) {
+    this.session.sendChat(String(n));
+    $('chat-input').value = '';
+    this.tauntPick = 0;
+    this.closeChat();
+  }
+
+  tauntVoice(p) { return { pitch: 0.8 + (p % 4) * 0.15, rate: 1 }; }
+  hearTaunt(n) { say(TAUNTS[n], 10 + this.me, this.tauntVoice(this.me)); }
 
   onDown(e) {
     sfx.unlock();
+    if (!$('chat-input').classList.contains('hidden')) this.closeChat(); // clicking the map closes the chat box
     const x = e.offsetX, y = e.offsetY;
     if (e.button === 1) { e.preventDefault(); this.mouse.pan = { x, y, cx: this.r.cam.x, cy: this.r.cam.y }; return; }
     if (e.button === 2) {
@@ -461,7 +520,7 @@ export class GameUI {
     const taunt = msg.p >= 0 && /^\d{1,2}$/.test(msg.text.trim()) ? TAUNTS[+msg.text.trim()] : null;
     if (msg.p < 0) { el.classList.add('sys'); el.textContent = msg.text; }
     else el.innerHTML = `<b style="color:${esc(msg.color || '#fff')}">${esc(msg.name)}:</b> ${taunt ? `<i>📣 ${esc(msg.text.trim())}. ${esc(taunt)}</i>` : esc(msg.text)}`;
-    if (taunt) say(taunt, 10 + msg.p, { pitch: 0.8 + (msg.p % 4) * 0.15, rate: 1 });
+    if (taunt) say(taunt, 10 + msg.p, this.tauntVoice(msg.p));
     else if (msg.p >= 0 && msg.p !== this.me) sfx.play('click');
     const log = $('chat-log');
     log.appendChild(el);

@@ -178,44 +178,14 @@ const S = {
     [[311, 0, 0.45], [294, 0.5, 0.45], [277, 1.0, 0.45], [262, 1.5, 1.6]].forEach(([f, w, d], i) =>
       tone(f, d, { type: 'sawtooth', vol: 0.22, lp: 1100, q: 3, when: w, attack: 0.05, hold: d * 0.6, vib: i === 3 ? [6, 9] : [4, 2] }));
   },
-  moo: (o = { v: 1 }) => {
-    // "Mmm-OOOO-oh". A buzzy voice goes through two formant filters that open up like a mouth,
-    // so it starts humming ("mm") and opens into "oo". Pitch rises a bit, then sags at the end.
-    const a = ctx(); if (!a) return;
-    const t = a.currentTime, base = rnd(175, 230), dur = rnd(1.0, 1.5), v = o.v ?? 1;
-    const osc = a.createOscillator(), osc2 = a.createOscillator();
-    osc.type = 'sawtooth'; osc2.type = 'triangle';
-    for (const [x, m] of [[osc, 1], [osc2, 0.5]]) {
-      x.frequency.setValueAtTime(base * 0.86 * m, t);
-      x.frequency.linearRampToValueAtTime(base * 1.04 * m, t + dur * 0.3);
-      x.frequency.linearRampToValueAtTime(base * 0.97 * m, t + dur * 0.7);
-      x.frequency.linearRampToValueAtTime(base * 0.78 * m, t + dur);
-    }
-    // a little vibrato once the moo gets going
-    const lfo = a.createOscillator(), lg = a.createGain();
-    lfo.frequency.value = 5.5; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(base * 0.018, t + dur * 0.5);
-    lfo.connect(lg); lg.connect(osc.frequency);
-    const mix = a.createGain(); mix.gain.value = 1;
-    const g2 = a.createGain(); g2.gain.value = 0.6;
-    osc.connect(mix); osc2.connect(g2).connect(mix);
-    const g = a.createGain();
-    // formants: closed "m" (low) opening to "oo/aw"
-    const f1 = a.createBiquadFilter(), f2 = a.createBiquadFilter(), body = a.createBiquadFilter();
-    f1.type = 'bandpass'; f1.Q.value = 5; f2.type = 'bandpass'; f2.Q.value = 7; body.type = 'lowpass'; body.Q.value = 1;
-    f1.frequency.setValueAtTime(300, t); f1.frequency.linearRampToValueAtTime(320, t + 0.18); f1.frequency.linearRampToValueAtTime(720, t + dur * 0.4); f1.frequency.linearRampToValueAtTime(480, t + dur);
-    f2.frequency.setValueAtTime(700, t); f2.frequency.linearRampToValueAtTime(1150, t + dur * 0.4); f2.frequency.linearRampToValueAtTime(850, t + dur);
-    body.frequency.setValueAtTime(350, t); body.frequency.linearRampToValueAtTime(1300, t + dur * 0.4); body.frequency.linearRampToValueAtTime(600, t + dur);
-    const gf1 = a.createGain(), gf2 = a.createGain(), gb = a.createGain();
-    gf1.gain.value = 1.4; gf2.gain.value = 0.7; gb.gain.value = 0.35;
-    mix.connect(f1).connect(gf1).connect(g); mix.connect(f2).connect(gf2).connect(g); mix.connect(body).connect(gb).connect(g);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.25 * v, t + 0.06);   // "mm"
-    g.gain.exponentialRampToValueAtTime(0.6 * v, t + dur * 0.35); // "OO"
-    g.gain.setValueAtTime(0.6 * v, t + dur * 0.65);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    g.connect(out(o.pan));
-    for (const x of [osc, osc2, lfo]) { x.start(t); x.stop(t + dur + 0.05); }
-    noise(dur * 0.8, { type: 'bandpass', freq: 900, q: 1, vol: 0.03 * v, when: 0.1, attack: 0.2, pan: o.pan }); // breath
+  moo: (o = {}) => {
+    // A cow voiced by the browser's text-to-speech. Every cow gets a random voice, pitch and speed.
+    // It never cuts anyone off: if someone is already talking, the cow keeps quiet.
+    try { if (speechSynthesis.speaking || speechSynthesis.pending) return; } catch { return; }
+    const squeaky = Math.random() < 0.2;
+    say(['Moo', 'Moo', 'Moo moo', 'Moo?', 'Moo!', 'Moo, moo, moo'][Math.floor(Math.random() * 6)], Math.floor(Math.random() * 1000), {
+      pitch: squeaky ? rnd(1.6, 2) : rnd(0.1, 0.6), rate: rnd(0.45, 0.8), vol: o.v ?? 1, noCancel: true,
+    });
   },
   mutant: (o = { v: 1 }) => {
     tone(70, 1.4, { type: 'sawtooth', vol: 0.35 * o.v, lp: 700, q: 8, vib: [11, 18], slide: 45, pan: o.pan, attack: 0.05 });
@@ -370,10 +340,10 @@ export function say(text, who = 'announcer', o = {}) {
     const now = performance.now();
     const isAnn = who === 'announcer';
     if (!isAnn && now < announcerBusyUntil) return; // don't talk over the announcer
-    if (!isAnn || o.interrupt) speechSynthesis.cancel();
+    if ((!isAnn && !o.noCancel) || o.interrupt) speechSynthesis.cancel();
     else if (speechSynthesis.pending) return; // don't stack announcements up
     const u = new SpeechSynthesisUtterance(text);
-    u.volume = Math.min(1, cfg.vol * 1.2);
+    u.volume = Math.min(1, cfg.vol * 1.2 * (o.vol ?? 1));
     if (voices.length) {
       if (isAnn) u.voice = voices.find((v) => /UK English Male|Daniel|Arthur|Male/i.test(v.name)) || voices[0];
       else u.voice = voices[Math.abs(who | 0) % voices.length];

@@ -48,11 +48,11 @@ Cities get local names, and so do most soldiers. Selecting a nation unit shows w
 
 This is on by default. The host can switch it off in the lobby ("Silly stuff: Off").
 
-- **Cows** wander the map. Kill them for food. If a cow walks into nuclear fallout, it becomes a **mutant cow** that attacks everyone.
+- **Cows** wander the map and moo in a random spoken voice (this uses the *Spoken voices* setting). Kill them for food. If a cow walks into nuclear fallout, it becomes a **mutant cow** that attacks everyone.
 - **Supply crates** appear. Touch one with any unit to open it. You might get resources, free soldiers, a free tech, more cows… or a single sad potato.
 - **Random events** happen every few minutes: a plague of frogs (farms work at half speed), a cow stampede, happy hour (everyone moves faster), a tax audit, an economic boom, a supply drop, or a **meteor** (you get a warning circle first, so move your stuff).
 - **Units talk back.** Every unit has a name. Click the same unit too many times and it will complain.
-- **Taunts.** Type a number from 1 to 29 in chat and everyone's browser says it out loud. Try 11, 14 and 22.
+- **Taunts.** Press Enter or click 📣 to see the list of taunts. Click one and everyone's browser says it out loud, or click its 🔊 to hear it yourself first. Typing in the chat box narrows the list, and typing a number from 1 to 29 still works.
 - **Awards** at the end of the game, like *Most Likely to Start World War 3* and *Steak Enthusiast*.
 
 ### Sound and display
