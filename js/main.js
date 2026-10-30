@@ -203,7 +203,7 @@ $('btn-copy').addEventListener('click', async () => {
 for (const sel of $('settings').querySelectorAll('select')) {
   sel.addEventListener('change', () => {
     const k = sel.dataset.set;
-    const v = ['startAge', 'doomsday', 'speed'].includes(k) ? +sel.value : k === 'silly' || k === 'wonders' ? sel.value === 'true' : sel.value;
+    const v = ['startAge', 'doomsday', 'speed', 'noRush'].includes(k) ? +sel.value : k === 'silly' || k === 'wonders' ? sel.value === 'true' : sel.value;
     session.setSettings({ [k]: v });
   });
 }

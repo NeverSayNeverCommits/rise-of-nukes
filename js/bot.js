@@ -7,15 +7,15 @@ import { DEP, T } from './sim/map.js';
 
 export const BOT_LEVELS = {
   easy: {
-    name: 'Easy', think: 60, workers: [12, 16, 22, 28, 32], army: [3, 6, 10, 14, 18], firstAttack: 540, waveEvery: 240, armyShare: 0.45,
+    name: 'Easy', think: 60, workers: [12, 16, 22, 28, 32], army: [3, 6, 10, 14, 18], firstAttack: 900, waveEvery: 360, minWave: 10, armyShare: 0.45,
     ageDelay: 120, techs: 0.35, cities: 0.5, wonders: false, nukes: false, upgrades: false,
   },
   normal: {
-    name: 'Normal', think: 30, workers: [18, 26, 36, 46, 54], army: [6, 12, 18, 26, 34], firstAttack: 330, waveEvery: 150, armyShare: 0.6,
+    name: 'Normal', think: 30, workers: [18, 26, 36, 46, 54], army: [6, 12, 18, 26, 34], firstAttack: 570, waveEvery: 240, minWave: 12, armyShare: 0.6,
     ageDelay: 15, techs: 0.75, cities: 0.8, wonders: true, nukes: true, upgrades: true,
   },
   hard: {
-    name: 'Hard', think: 20, workers: [22, 34, 48, 60, 70], army: [8, 16, 26, 36, 48], firstAttack: 240, waveEvery: 100, armyShare: 0.75,
+    name: 'Hard', think: 20, workers: [22, 34, 48, 60, 70], army: [8, 16, 26, 36, 48], firstAttack: 240, waveEvery: 100, minWave: 4, armyShare: 0.75,
     ageDelay: 0, techs: 1, cities: 1, wonders: true, nukes: true, upgrades: true,
   },
 };
@@ -463,7 +463,8 @@ export class Bot {
     for (const id of this.wave) if (!w.get(id)) this.wave.delete(id);
     const free = ground.filter((u) => !this.wave.has(u.id));
     const sinceLast = secs - this.lastWave;
-    if (secs >= lv.firstAttack && sinceLast >= lv.waveEvery && free.length >= Math.max(4, lv.army[a] * 0.6)) {
+    const attackAt = Math.max(lv.firstAttack, (+w.settings.noRush || 0) * 60 + 30);
+    if (secs >= attackAt && sinceLast >= lv.waveEvery && free.length >= Math.max(lv.minWave, lv.army[a] * 0.6)) {
       this.lastWave = secs;
       const [tx, ty] = w.centre(target);
       for (const u of free) this.wave.add(u.id);

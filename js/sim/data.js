@@ -28,7 +28,11 @@ export const MARKET = { capBonus: 0.1, trade: 100, rate: 0.6, ratePerCommerce: 0
 export const BUILD_RATE = 1;      // build-seconds per citizen per second
 export const POP_MAX = 200;
 export const CITY_MIN_DIST = 12;  // between city centres
-export const ATTRITION = 0.01;    // share of max hp lost per second in enemy land
+// Share of max hp lost per second in enemy land, by the age of the unit's owner.
+// It hurts most early on, so an early raid wears itself out on the way in.
+export const ATTRITION = [0.02, 0.018, 0.015, 0.012, 0.01];
+// Units standing on their own team's land take less damage. Citizens get extra cover.
+export const HOME_GUARD = { unit: 0.25, citizen: 0.5 };
 export const FALLOUT_DMG = 0.04;  // share of max hp lost per second in fallout
 
 // Damage multipliers: MULT[attackerClass][targetClass]
@@ -132,9 +136,9 @@ export const UNITS = {
 // Building footprints are square: size x size tiles.
 export const BLDS = {
   city: {
-    size: 3, hp: 2500, cost: { food: 200, wood: 250 }, time: 60, key: 'C', icon: '🏛️', age: 0,
+    size: 3, hp: 4000, cost: { food: 200, wood: 250 }, time: 60, key: 'C', icon: '🏛️', age: 0,
     names: ['City', 'City', 'City', 'City', 'City'], sight: 10,
-    atk: 8, range: 6, cd: 1.5, pop: 25, trains: ['citizen'],
+    atk: 14, range: 8, cd: 1, pop: 25, trains: ['citizen'],
     desc: 'Claims territory, trains citizens and researches the next age. Build more to grow your borders.',
   },
   farm: {
@@ -180,7 +184,7 @@ export const BLDS = {
   },
   tower: {
     size: 1, hp: 700, cost: { wood: 80, metal: 60 }, time: 20, key: 'R', icon: '🗼', age: 1, sight: 9,
-    names: ['Tower', 'Tower', 'Fort Tower', 'Flak Bunker', 'Flak Bunker'], atk: 12, range: 7, cd: 1.5,
+    names: ['Tower', 'Tower', 'Fort Tower', 'Flak Bunker', 'Flak Bunker'], atk: 18, range: 8, cd: 1.5,
     desc: 'Shoots at enemies nearby, including planes.',
   },
   airfield: {

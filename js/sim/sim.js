@@ -1,7 +1,7 @@
 // The game simulation. Every player runs this exact code with the exact same commands,
 // so it must be deterministic: no Math.random, no Date, no trig in here.
 import {
-  RES, AGES, AGE_UP, GATHER_RATE, CITY_INCOME, BUILD_RATE, POP_MAX, CITY_MIN_DIST, ATTRITION,
+  RES, AGES, AGE_UP, GATHER_RATE, CITY_INCOME, BUILD_RATE, POP_MAX, CITY_MIN_DIST, ATTRITION, HOME_GUARD,
   FALLOUT_DMG, MULT, UNITS, BLDS, TECHS, NUKE, START_RES, MAP_SIZES, cityLimit, cityRadius, techSum, gatherMult,
   forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime, techMissing, commerceLevel, tradeRate,
   gatherCap, MARKET, LASER, ROCKET, TERRACOTTA,
@@ -17,7 +17,7 @@ export const DT = TICK_MS / 1000;
 const CELL = 2; // spatial bucket size in tiles
 
 export function defaultSettings() {
-  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on', silly: true, wonders: true, speed: 1 };
+  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on', silly: true, wonders: true, speed: 1, noRush: 0 };
 }
 
 export class World {
@@ -26,6 +26,8 @@ export class World {
     this.setup = setup;
     const st = { ...defaultSettings(), ...(setup.settings || {}) };
     this.settings = st;
+    // No rush: nobody can fight until this tick. The setting is in game minutes.
+    this.truceEnd = Math.round((+st.noRush || 0) * 60 / DT);
     const size = MAP_SIZES[st.mapSize] || 128;
     this.map = genMap(setup.seed, setup.players.length, size);
     this.W = this.map.w; this.H = this.map.h;
@@ -102,7 +104,10 @@ export class World {
   newId() { return this.s.nextId++; }
   rand() { return nextRand(this.s); }
   get(id) { return this.byId.get(id); }
-  enemy(a, b) { return a !== b && a >= 0 && b >= 0 && this.s.players[a].team !== this.s.players[b].team; }
+  // Other team, even if the no rush truce is still on.
+  rival(a, b) { return a !== b && a >= 0 && b >= 0 && this.s.players[a].team !== this.s.players[b].team; }
+  truce() { return this.s.tick < this.truceEnd; }
+  enemy(a, b) { return this.rival(a, b) && !this.truce(); }
   ally(a, b) { return a === b || (a >= 0 && b >= 0 && this.s.players[a].team === this.s.players[b].team); }
   // Can player p attack entity t? (critters can always be attacked)
   hostile(p, t) { return t.kind === 'c' || this.enemy(p, t.owner); }
@@ -405,6 +410,7 @@ export class World {
       case 'attack': {
         const t = this.get(cmd.t);
         if (!t || t.hp <= 0) break;
+        if (this.truce() && this.rival(p, t.owner)) break;
         for (const u of ownUnits()) if (this.canHit(this.stats(p, u.type), t)) this.setOrder(u, { k: 'attack', t: t.id });
         break;
       }
@@ -508,7 +514,7 @@ export class World {
       }
       case 'launch': {
         const b = ownBld();
-        if (!b || b.type !== 'silo' || b.stock <= 0) break;
+        if (!b || b.type !== 'silo' || b.stock <= 0 || this.truce()) break;
         b.stock--;
         const sx = b.x + 1, sy = b.y + 1;
         const dx = cmd.x - sx, dy = cmd.y - sy;
@@ -540,7 +546,7 @@ export class World {
       }
       case 'laser': {
         const b = ownBld();
-        if (!b || b.type !== 'laser' || !b.done || (b.ready || 0) > this.s.tick) break;
+        if (!b || b.type !== 'laser' || !b.done || (b.ready || 0) > this.s.tick || this.truce()) break;
         b.ready = this.s.tick + Math.round(LASER.every / DT);
         this.s.strikes.push({ p, x: +cmd.x, y: +cmd.y, at: this.s.tick + Math.round(LASER.delay / DT) });
         this.event({ type: 'laserAim', p, x: +cmd.x, y: +cmd.y, sx: b.x + 2, sy: b.y + 2, delay: LASER.delay });
@@ -807,6 +813,11 @@ export class World {
 
   damage(t, amount, by, src = 0) {
     if (t.hp <= 0) return;
+    if (this.truce() && this.rival(by, t.owner)) return;
+    if (t.kind === 'u' && this.ally(this.terrAt(t.x, t.y), t.owner)) {
+      // Home ground: units on their own team's land are harder to hurt.
+      amount *= 1 - (UNITS[t.type].cls === 'cit' ? HOME_GUARD.citizen : HOME_GUARD.unit);
+    }
     t.hp -= amount;
     if (t.kind === 'b') t.lastAtk = by;
     if (src) t.hitU = src;
@@ -1263,8 +1274,30 @@ export class World {
     });
   }
 
+  // During no rush, anyone standing on another team's land turns round and walks home.
+  closedBorders() {
+    for (const u of this.s.units) {
+      if (u.hp <= 0 || !this.rival(this.terrAt(u.x, u.y), u.owner) || (u.ord && u.ord.home)) continue;
+      let best = null, bd = 1e18;
+      for (const b of this.s.blds) {
+        if (b.owner !== u.owner || b.type !== 'city') continue;
+        const dx = b.x - u.x, dy = b.y - u.y, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = b; }
+      }
+      if (!best) continue;
+      u.wp = [];
+      this.groupMove([u], best.x + best.size / 2, best.y + best.size + 1, false);
+      if (u.ord) u.ord.home = true;
+    }
+  }
+
   hazards() {
     const s = this.s;
+    if (this.truceEnd) {
+      if (s.tick === this.truceEnd - Math.round(60 / DT)) this.event({ type: 'truce', left: 60 });
+      if (s.tick === this.truceEnd) this.event({ type: 'truce', left: 0 });
+      if (this.truce() && s.tick % 10 === 0) this.closedBorders();
+    }
     // Attrition in enemy territory (checked twice a second).
     if (s.tick % 10 === 0) {
       for (const u of s.units) {
@@ -1274,7 +1307,7 @@ export class World {
           const pl = s.players[u.owner];
           // Logistics and K2 Climbers make it hurt less. Karaoke Night makes it hurt more.
           const mul = (1 - techSum(pl, 'attrition')) * (1 - nbonus(pl, 'attrition')) * (this.karaoke[o] ? 2 : 1);
-          u.hp -= this.uMax(u) * ATTRITION * mul * 0.5;
+          u.hp -= this.uMax(u) * ATTRITION[pl.age] * mul * 0.5;
           u.attr = s.tick;
         } else if (o === u.owner && s.players[o].techs.seven11) {
           // 7-Eleven on Every Corner: heal 1.5% a second at home.

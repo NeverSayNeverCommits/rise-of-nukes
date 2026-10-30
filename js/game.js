@@ -374,6 +374,7 @@ export class GameUI {
     const units = mine.filter((e) => e.kind === 'u');
     const blds = mine.filter((e) => e.kind === 'b');
     if (units.length) {
+      if (target && w.truce() && w.rival(this.me, target.owner)) this.alert('🕊️ No rush is on: nobody can attack yet.', 'info');
       if (target && w.hostile(this.me, target)) {
         this.send({ c: 'attack', ids: units.map((u) => u.id), t: target.id });
         this.r.addMarker(...w.centre(target), '#ff4040');
@@ -416,6 +417,7 @@ export class GameUI {
       const u0 = this.world.get(ids[0]);
       if (u0) this.speak(u0, 'attack');
     } else if (m.what === 'nuke') {
+      if (w.truce()) this.alert('🕊️ No rush is on: nobody can launch yet.', 'info');
       this.send({ c: 'launch', b: m.b, x: wx, y: wy });
     } else if (m.what === 'laser') {
       this.send({ c: 'laser', b: m.b, x: wx, y: wy });
@@ -783,6 +785,10 @@ export class GameUI {
           break;
         case 'destroyed':
           if (seen && near(e.x, e.y, 30)) sfx.at('collapse', e.x, e.y);
+          break;
+        case 'truce':
+          if (e.left) this.alert('🕊️ No rush ends in 1 minute. Get ready!', 'info');
+          else this.alert('⚔️ No rush is over. The war can start!', 'bad');
           break;
         case 'launch':
           this.lastAlertPos = [e.x, e.y];
@@ -1212,6 +1218,10 @@ export class GameUI {
     const m = this.s.mods || {};
     const mods = [m.food && '🐸', m.speed && '🍺', m.gather && '📈'].filter(Boolean).join('');
     if (mods) $('clock').textContent = mods + ' ' + $('clock').textContent;
+    if (w.truce()) {
+      const left = Math.ceil((w.truceEnd - this.s.tick) * DT);
+      $('clock').textContent = `🕊️ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · ${$('clock').textContent}`;
+    }
     const idle = this.s.units.filter((u) => u.owner === me && u.type === 'citizen' && !u.ord).length;
     $('btn-idle').querySelector('span').textContent = idle;
     $('btn-idle').style.opacity = idle ? 1 : 0.5;

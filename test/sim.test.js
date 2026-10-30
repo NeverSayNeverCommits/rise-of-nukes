@@ -431,3 +431,74 @@ assert.ok(target.hp <= 1, 'city ruined');
 }
 
 console.log('ALL TESTS PASSED');
+
+// ---------- early defence and no rush ----------
+{
+  const duo = (settings = {}) => new World({
+    seed: 7,
+    players: [{ name: 'A', color: '#f00', team: 0, nation: 'germany' }, { name: 'B', color: '#00f', team: 1, nation: 'germany' }],
+    settings: { mapSize: 'small', silly: false, ...settings },
+  });
+  const cityOf = (w, p) => w.s.blds.find((b) => b.owner === p && b.type === 'city');
+  // Puts raiders next to player 0's city and sends them in. Returns their ids and the first command.
+  const raid = (w, types) => {
+    const c = cityOf(w, 0), ids = [];
+    for (const type of types) {
+      const [x, y] = w.freeSpotNear(c.x + 12, c.y + 1, 1);
+      ids.push(w.addUnit(type, 1, x, y).id);
+    }
+    return { ids, cmd: { p: 1, c: 'move', ids, x: c.x + 1.5, y: c.y + 1.5, am: true } };
+  };
+
+  // A small early raid dies with no help from the defending player.
+  {
+    const w = duo();
+    const { ids, cmd } = raid(w, ['infantry', 'infantry', 'infantry', 'ranged', 'ranged', 'ranged']);
+    const city = cityOf(w, 0), hp = city.hp;
+    w.step([cmd]);
+    for (let i = 0; i < 90 * 20; i++) w.step([]);
+    assert.equal(w.s.units.filter((u) => ids.includes(u.id)).length, 0, 'raid should die');
+    assert.equal(city.owner, 0);
+    assert.ok(city.hp > hp * 0.8, 'city should barely be scratched');
+  }
+
+  // Siege still takes a city, so games can end.
+  {
+    const w = duo({ startAge: 2 });
+    const { cmd } = raid(w, [...Array(12).fill('infantry'), ...Array(6).fill('siege')]);
+    const city = cityOf(w, 0);
+    w.step([cmd]);
+    for (let i = 0; i < 120 * 20 && city.owner === 0 && city.hp > 0; i++) w.step([]);
+    assert.ok(city.owner !== 0 || city.hp <= 0, 'siege should break the city');
+  }
+
+  // No rush: no damage, no launch, borders closed, then war. Two copies stay the same.
+  {
+    const a = duo({ noRush: 2, startAge: 4 }), b = duo({ noRush: 2, startAge: 4 });
+    const city = cityOf(a, 0), hp = city.hp;
+    const r = raid(a, Array(6).fill('infantry'));
+    raid(b, Array(6).fill('infantry'));
+    const atk = { p: 1, c: 'attack', ids: r.ids, t: city.id };
+    const seen = [];
+    a.step([r.cmd, atk]); b.step([r.cmd, atk]);
+    let crossed = 0;
+    for (let i = 0; i < 119 * 20; i++) {
+      const cmds = i % 200 === 0 ? [r.cmd] : [];
+      a.step(cmds); b.step(cmds);
+      for (const e of a.events.splice(0)) if (e.type === 'truce') seen.push(e.left);
+      b.events.length = 0;
+      if (a.s.units.some((u) => u.owner === 1 && a.terrAt(u.x, u.y) === 0 && u.ord && u.ord.home)) crossed++;
+    }
+    assert.equal(city.hp, hp, 'no damage during no rush');
+    assert.equal(a.s.units.filter((u) => r.ids.includes(u.id)).length, 6, 'nobody dies during no rush');
+    assert.ok(crossed > 0, 'units that cross the border get sent home');
+    assert.equal(JSON.stringify(a.s), JSON.stringify(b.s), 'two copies stay the same');
+    const c = new World(a.setup, JSON.parse(JSON.stringify(a.s)));
+    assert.ok(c.truce() && c.truceEnd === a.truceEnd, 'save and load keeps no rush');
+    assert.equal(a.enemy(0, 1), false);
+    for (let i = 0; i < 2 * 20; i++) { a.step([]); for (const e of a.events.splice(0)) if (e.type === 'truce') seen.push(e.left); }
+    assert.equal(a.enemy(0, 1), true);
+    assert.deepEqual(seen, [60, 0]);
+    console.log('defence ok: small raid dies, siege breaks city, no rush holds then ends');
+  }
+}

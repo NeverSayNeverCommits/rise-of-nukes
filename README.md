@@ -15,7 +15,7 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 
 **Bots.** The host can add bots at Easy, Normal or Hard. Put your friends on your team and the bots on another for a co-op game, or mix them in however you like. Bots use the same rules and the same commands as people, and they run on the host's computer.
 
-**Lobby settings** include map size, start resources, start age, the Doomsday limit, fog, silly stuff, **wonders** (on or off) and **game speed** (1×, 1.25×, 1.5× or 2×). The host can also change the speed during the game with the ⏩ button.
+**Lobby settings** include map size, start resources, start age, the Doomsday limit, **no rush** (5 to 20 game minutes of peace at the start: nobody can attack or launch, and units that cross a border walk home), fog, silly stuff, **wonders** (on or off) and **game speed** (1×, 1.25×, 1.5× or 2×). The host can also change the speed during the game with the ⏩ button.
 
 ### Basics
 
@@ -28,8 +28,8 @@ It runs entirely in the browser. You don't need a server: host it free on GitHub
 | **Market** | Press K with a citizen (Classical Age). Each Market raises all gather limits by 10%. Select it to buy a resource with whichever one you have the most of (Shift = 5 times). |
 | **Ages** | Ancient → Classical → Gunpowder → Industrial → Atomic. Advance at a city, once you have the Science tech for that age. Units upgrade automatically: spearmen become riflemen, horsemen become tanks, catapults become rocket artillery. |
 | **Tech** | The Library researches better gathering, Civics (more population and cities), attack and armour upgrades, and the Manhattan Project. Each resource has three gathering techs, and the later ones are bigger: Fertiliser, Chainsaws, Cracking Towers (Industrial), Strip Mining and Fracking (Atomic). The Library only shows the next tech in each chain. |
-| **Territory** | Cities claim land. You can only build inside your borders. Enemy territory slowly damages your units. More cities = more land. City limit goes up with each age. |
-| **Army** | Infantry beats cavalry, ranged beats infantry, cavalry beats ranged and siege, siege wrecks buildings. Towers and cities shoot back. |
+| **Territory** | Cities claim land. You can only build inside your borders. Enemy territory damages your units, most of all in the early ages. Units on their own land take 25% less damage, and citizens take 50% less. More cities = more land. City limit goes up with each age. |
+| **Army** | Infantry beats cavalry, ranged beats infantry, cavalry beats ranged and siege, siege wrecks buildings. Towers and cities shoot back hard, so small early raids die on their own. Bring siege to take a city. |
 | **Air force** | From the Industrial Age, build an **Airfield** (P). **Fighters** (F) hunt enemy planes and can shoot at ground units. **Bombers** (B) fly to a target, drop a big load of bombs (great against buildings), then fly back to the nearest airfield or city to reload, and go again. Planes fly over forests, water and mountains. In the Atomic Age they become jet fighters and stealth bombers. |
 | **Anti-air** | The Arms Factory (the old Siege Workshop) builds **Flak Cannons** (Q), which only shoot planes and are very good at it. Riflemen and other gun-armed foot soldiers (Gunpowder Age and later), towers, cities and fighters can also hit planes. Tanks, cavalry, siege and citizens can't. Towers become Flak Bunkers in the Industrial Age. |
 | **Conquest** | Bring a city to 0 HP with soldiers nearby to capture it. Lose all your cities and you're out. Last team standing wins. |
@@ -46,7 +46,7 @@ Like in *Rise of Nations*, everyone plays the same game, but each nation has a f
 
 | | 🇩🇪 Germany | 🇹🇼 Taiwan | 🇵🇭 Philippines | 🇵🇰 Pakistan |
 |---|---|---|---|---|
-| **National power** | Buildings +30% health. Units train 20% faster. Mines +15% metal. | Library techs cost 15% less and finish 25% faster. Cities make 50% more free food and wood. | Citizens build 50% faster. +10 population per city. Cows give double food. Farms +10% food, camps +15% wood. | Farms make 20% more food. Half damage in enemy territory. |
+| **National power** | Buildings +30% health. Units train 20% faster. Mines +25% metal. | Library techs cost 15% less and finish 25% faster. Cities make 25% more free food and wood. | Citizens build 50% faster. +10 population per city. Cows give double food. Farms +10% food, camps +15% wood. | Farms make 20% more food. Half damage in enemy territory. |
 | **Unique units** | Landsknecht (Gunpowder infantry): melee, giant sword, hits everyone nearby. Leopard tanks (Industrial, Atomic): tougher and faster. | Bubble Tea Gunners (Industrial, Atomic ranged): fire tapioca pearls 18% faster. | Mactan Warriors (Ancient, Classical infantry): +30% attack, +10% speed. | Jingle Truck Artillery (Industrial, Atomic siege): tougher, faster, bigger blast, bells. |
 | **Signature unit** | 🎺 Oompah Band (Classical+, Barracks): doesn't fight, but nearby units attack 25% faster. Becomes a techno DJ in the Atomic Age. | 🛵 Scooter Swarm (Industrial+, Stable): three fast scooters per order. | 🚐 Battle Jeepney (Industrial+, Stable): shoots from the windows and heals your units nearby. | 🏏 Fast Bowler (Ancient+, Barracks): throws cricket balls. Longest range of any soldier. |
 | **National tech** | Autobahn: +40% speed inside your borders. | 7-Eleven on Every Corner: units heal inside your borders. | Karaoke Night: enemies in your land are 25% slower and take double territory damage. | Cornered Tigers: units do 50% more damage below half health. |
