@@ -417,7 +417,7 @@ export class GameUI {
       const u0 = this.world.get(ids[0]);
       if (u0) this.speak(u0, 'attack');
     } else if (m.what === 'nuke') {
-      if (w.truce()) this.alert('🕊️ No rush is on: nobody can launch yet.', 'info');
+      if (this.world.truce()) this.alert('🕊️ No rush is on: nobody can launch yet.', 'info');
       this.send({ c: 'launch', b: m.b, x: wx, y: wy });
     } else if (m.what === 'laser') {
       this.send({ c: 'laser', b: m.b, x: wx, y: wy });
