@@ -1,7 +1,7 @@
 // Draws the game on a canvas. Nothing in here changes the game state.
 import { T, DEP } from './sim/map.js';
 import { hash2 } from './sim/rng.js';
-import { UNITS, BLDS, NUKE, cityRadius } from './sim/data.js';
+import { UNITS, BLDS, NUKE, LASER, cityRadius } from './sim/data.js';
 import { DT } from './sim/sim.js';
 import { bldSprite, tint } from './sprites.js';
 import { flagCanvas } from './flags.js';
@@ -404,6 +404,8 @@ export class Renderer {
     };
     const me = this.me;
     const watching = this.spectate || !w.s.players[me] || !w.s.players[me].alive;
+    // The Great Radio Tower shows you and your allies the whole map.
+    if (w.s.players.some((p, i) => p.w && p.w.radio && w.ally(me, i))) { vis.fill(1); this.explored.fill(1); }
     for (const u of w.s.units) if (watching || w.ally(me, u.owner)) reveal(u.x, u.y, UNITS[u.type].sight);
     for (const b of w.s.blds) if (watching || w.ally(me, b.owner)) reveal(b.x + b.size / 2, b.y + b.size / 2, BLDS[b.type].sight + b.size / 2);
     const d = this.fogImg.data;
@@ -662,6 +664,41 @@ export class Renderer {
         case 'promote':
           this.burst(e.x, e.y, '#ffd700', 18, 2.5, 0.05);
           break;
+        case 'wonder':
+          this.fireworks(e.x, e.y, 8);
+          this.fx.push({ k: 'ring', x: e.x, y: e.y, t0: now, d: 1400, color: '#ffd700' });
+          this.fx.push({ k: 'ring', x: e.x, y: e.y, t0: now + 300, d: 1400, color: '#fff2a8' });
+          this.burst(e.x, e.y - 1, '#ffd700', 60, 5, 0.08);
+          if (this.onScreen(e.x, e.y, 10)) this.shake = Math.max(this.shake, 5);
+          break;
+        case 'wonderLost':
+          this.fx.push({ k: 'boom', x: e.x, y: e.y, t0: now, d: 1400, r: 4 });
+          this.fx.push({ k: 'smoke', x: e.x, y: e.y, t0: now, d: 9000, r: 4 });
+          this.decals.push({ k: 'crater', x: e.x, y: e.y, r: 3, t0: now, d: 90000 });
+          if (this.onScreen(e.x, e.y, 15)) this.shake = Math.max(this.shake, 12);
+          break;
+        case 'laserAim':
+          this.fx.push({ k: 'reticle', x: e.x, y: e.y, t0: now, d: e.delay * 1000 / (this.speedNow || 1), r: LASER.radius });
+          break;
+        case 'laser':
+          this.fx.push({ k: 'beam', x: e.x, y: e.y, t0: now, d: 1100, r: e.r });
+          this.fx.push({ k: 'boom', x: e.x, y: e.y, t0: now, d: 1100, r: e.r * 0.9 });
+          this.fx.push({ k: 'smoke', x: e.x, y: e.y, t0: now + 300, d: 7000, r: e.r * 0.7 });
+          this.decals.push({ k: 'crater', x: e.x, y: e.y, r: e.r * 0.9, t0: now, d: 70000 });
+          for (let i = 0; i < 40; i++) {
+            const a = Math.random() * TAU, sp = 3 + Math.random() * 6;
+            this.part({ k: 'debris', x: e.x, y: e.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 4, g: 10, drag: 1, life: 1100, r0: Math.random() * 6, col: '#2a2f33', layer: 1 });
+          }
+          if (this.onScreen(e.x, e.y, 25)) this.shake = Math.max(this.shake, 16);
+          break;
+        case 'rocketWin':
+          this.fx.push({ k: 'liftoff', x: e.x, y: e.y, t0: now, d: 7000 });
+          this.fireworks(e.x, e.y, 12);
+          this.shake = Math.max(this.shake, 14);
+          break;
+        case 'terracotta':
+          if (seen) this.burst(e.x, e.y, '#c98a5c', 16, 2.5, 0.07);
+          break;
         case 'age': {
           const city = w.s.blds.find((b) => b.owner === e.p && b.type === 'city');
           if (city && this.isVisible(city.x + 1.5, city.y + 1.5)) this.fireworks(city.x + 1.5, city.y + 1.5, 4);
@@ -851,6 +888,8 @@ export class Renderer {
       ctx.fillText('🚩', bx + z * 0.15, by);
     }
 
+    // where selected units are heading next (Shift queued stops)
+    this.drawWaypoints(ctx, ui);
     // order markers (move clicks)
     this.drawMarkers(ctx, now);
 
@@ -876,7 +915,7 @@ export class Renderer {
     if (ui.targetMode) {
       ctx.fillStyle = ui.targetMode === 'nuke' ? 'rgba(255,0,0,0.9)' : 'rgba(255,200,0,0.9)';
       ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(ui.targetMode === 'nuke' ? '☢ Click a target to launch. Right-click or Esc to cancel.' : 'Attack-move: click a destination', this.vw / 2, 70);
+      ctx.fillText(ui.targetMode === 'nuke' ? '☢ Click a target to launch. Right-click or Esc to cancel.' : ui.targetMode === 'laser' ? '🛰️ Click a target to fire the laser. Right-click or Esc to cancel.' : 'Attack-move: click a destination. Shift adds a stop.', this.vw / 2, 70);
     }
   }
 
@@ -946,6 +985,24 @@ export class Renderer {
       ctx.strokeStyle = pl.color; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.drawImage(flagCanvas(pl.nation), lx - tw / 2 + th * 0.35, ly - fh / 2, fw, fh);
       ctx.fillStyle = '#fff'; ctx.fillText(label, lx + fw / 2 + 2, ly + 1);
+    }
+    if (d.wonder && z >= 12) {
+      const left = b.type === 'rocket' && b.done ? Math.max(0, Math.ceil((b.launchAt - w.s.tick) * DT)) : -1;
+      const label = left >= 0 ? `🚀 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : `${d.icon} ${d.names[0]}`;
+      ctx.font = `bold ${Math.max(10, Math.round(z * 0.36))}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const th = Math.max(14, z * 0.5), tw = ctx.measureText(label).width + 16, lx = sx + S / 2, ly = sy - top - th * 0.2;
+      ctx.fillStyle = 'rgba(40,30,0,0.75)'; this.roundRect(ctx, lx - tw / 2, ly - th / 2, tw, th, th / 2); ctx.fill();
+      ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = left >= 0 && left <= 60 && Math.floor(now / 400) % 2 ? '#ff7b72' : '#ffe9a0'; ctx.fillText(label, lx, ly + 1);
+    }
+    if (b.type === 'laser' && b.done && b.owner === this.me && (b.ready || 0) <= w.s.tick) {
+      ctx.fillStyle = `rgba(95,240,255,${0.5 + 0.5 * Math.sin(now / 200)})`;
+      ctx.font = `bold ${Math.round(z * 0.4)}px system-ui`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+      ctx.fillText('READY', sx + S, sy + 2);
+    }
+    if (b.type === 'rocket' && b.done) {
+      // steam from the launch pad
+      if (Math.random() < 0.15) this.part({ k: 'smoke', x: b.x + 1.9 + (Math.random() - 0.5), y: b.y + 3.1, vx: (Math.random() - 0.5), vy: -0.2, life: 1600, size: 0.3, col: 'rgba(230,230,230,A)' });
     }
     if (b.type === 'silo' && b.stock > 0) {
       ctx.font = `bold ${Math.round(z * 0.45)}px system-ui`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
@@ -1618,6 +1675,40 @@ export class Renderer {
       const [sx, sy] = this.toScreen(f.x, f.y);
       if (sx < -400 || sy < -400 || sx > this.vw + 400 || sy > this.vh + 400) continue;
       switch (f.k) {
+        case 'reticle': { // warning circle while the laser charges
+          const rr = f.r * z, pulse = 0.5 + 0.5 * Math.sin(now / 70);
+          ctx.fillStyle = `rgba(95,240,255,${0.08 + t * 0.2})`;
+          ctx.beginPath(); ctx.ellipse(sx, sy, rr, rr * 0.8, 0, 0, TAU); ctx.fill();
+          ctx.strokeStyle = `rgba(160,250,255,${0.6 + pulse * 0.4})`; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.ellipse(sx, sy, rr, rr * 0.8, 0, 0, TAU); ctx.stroke();
+          const k = 1 - t;
+          ctx.beginPath(); ctx.ellipse(sx, sy, rr * (0.1 + k), rr * 0.8 * (0.1 + k), 0, 0, TAU); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(sx - rr, sy); ctx.lineTo(sx + rr, sy); ctx.moveTo(sx, sy - rr * 0.8); ctx.lineTo(sx, sy + rr * 0.8); ctx.stroke();
+          ctx.strokeStyle = `rgba(160,250,255,${t * 0.8})`; ctx.lineWidth = 1 + t * 3;
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, -10); ctx.stroke(); // aiming thread from space
+          break;
+        }
+        case 'beam': { // the big one
+          const a = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85, hw = f.r * z * (t < 0.15 ? 0.9 : 0.9 * (1 - (t - 0.15) / 0.85));
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          const g = ctx.createLinearGradient(sx - hw, 0, sx + hw, 0);
+          g.addColorStop(0, 'rgba(60,220,255,0)'); g.addColorStop(0.3, `rgba(60,220,255,${a * 0.6})`); g.addColorStop(0.5, `rgba(255,255,255,${a})`); g.addColorStop(0.7, `rgba(60,220,255,${a * 0.6})`); g.addColorStop(1, 'rgba(60,220,255,0)');
+          ctx.fillStyle = g; ctx.fillRect(sx - hw, -20, hw * 2, sy + 20);
+          const rg = ctx.createRadialGradient(sx, sy, 0, sx, sy, f.r * z * 1.5);
+          rg.addColorStop(0, `rgba(255,255,255,${a})`); rg.addColorStop(0.5, `rgba(90,235,255,${a * 0.6})`); rg.addColorStop(1, 'rgba(60,220,255,0)');
+          ctx.fillStyle = rg; ctx.beginPath(); ctx.ellipse(sx, sy, f.r * z * 1.5, f.r * z * 1.2, 0, 0, TAU); ctx.fill();
+          ctx.restore();
+          break;
+        }
+        case 'liftoff': { // the Moon Rocket goes up
+          const h = t * t * (this.vh + 300), rx = sx, ry = sy - h, r = z * 0.45;
+          for (let i = 0; i < 3; i++) this.part({ k: 'smoke', x: f.x + (Math.random() - 0.5) * 1.2, y: f.y + 0.4 + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 2, vy: Math.random() * 0.5, life: 2500, size: 0.5, col: 'rgba(225,225,225,A)' });
+          ctx.fillStyle = 'rgba(255,190,70,0.9)'; ctx.beginPath(); ctx.moveTo(rx - r * 0.7, ry + r * 3.5); ctx.lineTo(rx, ry + r * (5 + Math.random() * 4)); ctx.lineTo(rx + r * 0.7, ry + r * 3.5); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(rx - r, ry + r * 3.5); ctx.lineTo(rx - r, ry - r); ctx.lineTo(rx, ry - r * 3.2); ctx.lineTo(rx + r, ry - r); ctx.lineTo(rx + r, ry + r * 3.5); ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.strokeStyle = 'rgba(240,240,240,0.5)'; ctx.lineWidth = r * 1.5; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(rx, ry + r * 4); ctx.stroke();
+          break;
+        }
         case 'arrow': case 'bullet': case 'shell': case 'ball': case 'rocket': {
           const [tx, ty] = this.toScreen(f.x2, f.y2);
           const arc = f.k === 'ball' ? z * 1.5 : f.k === 'rocket' ? z * 2.2 : f.k === 'arrow' ? z * 0.5 : 0;
@@ -1815,9 +1906,43 @@ export class Renderer {
   }
 
   addMarker(x, y, color) { (this.markers ||= []).push({ x, y, color, t0: performance.now() }); }
+  worldPing(x, y, color) { (this.wpings ||= []).push({ x, y, color, t0: performance.now() }); }
+  drawWaypoints(ctx, ui) {
+    const list = [];
+    for (const id of ui.sel) { const u = this.world.get(id); if (u && u.kind === 'u' && u.wp && u.owner === this.me) list.push(u); if (list.length >= 30) break; }
+    if (!list.length) return;
+    ctx.save();
+    ctx.setLineDash([5, 5]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(183,245,189,0.7)';
+    for (const u of list) {
+      ctx.beginPath();
+      const o = u.ord && u.ord.x != null ? u.ord : u;
+      const [ax, ay] = this.toScreen(o.x, o.y);
+      ctx.moveTo(ax, ay);
+      for (const p of u.wp) { const [x, y] = this.toScreen(p.x, p.y); ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   drawMarkers(ctx, now) {
-    if (!this.markers) return;
     const z = this.cam.z;
+    if (this.wpings) {
+      this.wpings = this.wpings.filter((p) => now - p.t0 < 3000);
+      for (const p of this.wpings) {
+        const t = (now - p.t0) / 3000;
+        const [sx, sy] = this.toScreen(p.x, p.y);
+        ctx.strokeStyle = p.color; ctx.lineWidth = 3;
+        for (let i = 0; i < 2; i++) {
+          const k = (t * 3 + i * 0.5) % 1;
+          ctx.globalAlpha = (1 - k) * (1 - t * 0.5);
+          ctx.beginPath(); ctx.ellipse(sx, sy, z * (0.4 + k * 1.8), z * (0.3 + k * 1.3), 0, 0, TAU); ctx.stroke();
+        }
+        ctx.globalAlpha = 1 - t * 0.5;
+        ctx.font = `${Math.round(z)}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText('📍', sx, sy + z * 0.1 - Math.abs(Math.sin(now / 200)) * z * 0.3);
+        ctx.globalAlpha = 1;
+      }
+    }
+    if (!this.markers) return;
     this.markers = this.markers.filter((m) => now - m.t0 < 500);
     for (const m of this.markers) {
       const t = (now - m.t0) / 500;
@@ -1904,6 +2029,15 @@ export class Renderer {
     for (const m of w.s.missiles) {
       g.strokeStyle = blink ? '#ff0000' : '#ffffff'; g.lineWidth = 2;
       g.beginPath(); g.arc(m.x * sc, m.y * sc, NUKE.blastRadius * sc, 0, TAU); g.stroke();
+    }
+    for (const m of w.s.strikes || []) {
+      g.strokeStyle = blink ? '#5ff0ff' : '#ffffff'; g.lineWidth = 2;
+      g.beginPath(); g.arc(m.x * sc, m.y * sc, LASER.radius * sc + 2, 0, TAU); g.stroke();
+    }
+    for (const b of w.s.blds) {
+      if (!BLDS[b.type].wonder || (!w.ally(this.me, b.owner) && !this.isExplored(b.x, b.y))) continue;
+      g.fillStyle = '#ffd700'; g.font = 'bold 12px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.strokeStyle = '#000'; g.lineWidth = 2; g.strokeText('★', (b.x + 2) * sc, (b.y + 2) * sc); g.fillText('★', (b.x + 2) * sc, (b.y + 2) * sc);
     }
     for (const m of w.s.meteors || []) {
       g.strokeStyle = blink ? '#ff8000' : '#ffffff'; g.lineWidth = 2;

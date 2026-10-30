@@ -1,7 +1,8 @@
 // Runs the simulation headless. Checks that two copies stay identical (lockstep needs this),
 // that save/load gives the same result, and that a scripted game actually progresses.
 import { World } from '../js/sim/sim.js';
-import { BLDS } from '../js/sim/data.js';
+import { BLDS, TECHS, GATHER_CAP, MARKET, LASER, ROCKET } from '../js/sim/data.js';
+import { Bot } from '../js/bot.js';
 import assert from 'node:assert/strict';
 
 const setup = (extra = {}) => ({
@@ -49,7 +50,7 @@ function botCommands(w, tick) {
       if (b.type === 'workshop') cmds.push({ p, c: 'train', b: b.id, type: step % 2 ? 'siege' : 'aagun' });
       if (b.type === 'airfield') cmds.push({ p, c: 'train', b: b.id, type: step % 2 ? 'fighter' : 'bomber' });
       if (BLDS[b.type].gather && step % 5 === 2) cmds.push({ p, c: 'upgrade', b: b.id });
-      if (b.type === 'library') for (const t of ['agri1', 'wood1', 'civics', 'weap1', 'armor1', 'manhattan', 'autobahn', 'seven11', 'karaoke', 'tigers']) cmds.push({ p, c: 'research', b: b.id, tech: t });
+      if (b.type === 'library') for (const t of ['sci1', 'sci2', 'sci3', 'sci4', 'com1', 'com2', 'com3', 'agri1', 'wood1', 'civics', 'weap1', 'armor1', 'manhattan', 'autobahn', 'seven11', 'karaoke', 'tigers']) cmds.push({ p, c: 'research', b: b.id, tech: t });
     }
     // Every so often send the army at the next player's capital.
     if (step % 15 === 14 && army.length) {
@@ -91,7 +92,7 @@ const ages = a.s.players.map((p) => p.age);
 console.log('ages', ages.join(','), 'units', a.s.units.length, 'buildings', a.s.blds.length,
   'kills', a.s.players.map((p) => p.kills).join(','));
 assert.ok(a.s.units.length > 20, 'units were trained');
-assert.ok(Math.max(...ages) >= 2, 'someone aged up');
+assert.ok(Math.max(...ages) >= 1, 'someone aged up');
 
 // 4. Nukes: start in the Atomic age, build a silo, launch.
 const n = new World(setup({ startAge: 4 }));
@@ -209,7 +210,7 @@ assert.ok(target.hp <= 1, 'city ruined');
   assert.equal(count(0, 'oompah'), 1); assert.equal(count(1, 'oompah'), 0);
   assert.equal(count(1, 'scooter'), 3, 'scooters come in threes'); assert.equal(count(0, 'scooter'), 0);
   assert.equal(count(2, 'jeepney'), 1); assert.equal(count(3, 'bowler'), 1); assert.equal(count(2, 'bowler'), 0);
-  assert.deepEqual(w.s.players.map((p) => Object.keys(p.techs).sort().join()), ['autobahn', 'seven11', 'karaoke', 'tigers']);
+  assert.deepEqual(w.s.players.map((p) => Object.keys(p.techs).filter((t) => TECHS[t].nation).join()), ['autobahn', 'seven11', 'karaoke', 'tigers']);
   // Band makes neighbours attack faster.
   const band = w.s.units.find((u) => u.type === 'oompah');
   const pal = w.s.units.find((u) => u.owner === 0 && u.type === 'infantry');
@@ -296,6 +297,137 @@ assert.ok(target.hp <= 1, 'city ruined');
   const r = new World(two(), JSON.parse(JSON.stringify(w.serialize())));
   assert.equal(r.hash(), w.hash(), 'air save/load');
   console.log(`air ok: farm level ${farm.lvl}, bomber runs ${bombs}, city hp ${Math.round(hp0)} -> ${Math.round(ecity.hp)}`);
+}
+
+// ---------- gather limit, Science, Commerce, market, gifts, waypoints, wonders ----------
+{
+  const st = (settings = {}) => ({
+    seed: 77,
+    players: [{ name: 'A', color: '#f00', team: 0, nation: 'germany' }, { name: 'B', color: '#00f', team: 0, nation: 'taiwan' }, { name: 'C', color: '#0f0', team: 1, nation: 'pakistan' }],
+    settings: { resources: 'insane', silly: false, ...settings },
+  });
+  const w = new World(st()), w2 = new World(st());
+  const go = (cmds = []) => { w.step(cmds); w2.step(cmds); };
+  const both = (fn) => [fn(w), fn(w2)];
+  const place = (x, p, type) => {
+    const c = x.s.blds.find((b) => b.owner === p && b.type === 'city');
+    for (let r = 3; r < 30; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (x.canPlace(p, type, c.x + dx, c.y + dy).ok) { const b = x.addBld(type, p, c.x + dx, c.y + dy, true); x.finishBld(b); return b; }
+    }
+    throw new Error('no room for ' + type);
+  };
+
+  // Ages need Science.
+  const city = w.s.blds.find((b) => b.owner === 0 && b.type === 'city');
+  go([{ p: 0, c: 'research', b: city.id, tech: 'age' }]);
+  assert.equal(w.s.players[0].pending.age, undefined, 'no Science, no new age');
+  assert.ok(w.events.some((e) => e.type === 'error' && e.p === 0), 'told why');
+
+  // Upgrades need Commerce.
+  w.s.players[0].age = w2.s.players[0].age = 2;
+  const [farm] = both((x) => place(x, 0, 'farm'));
+  go([{ p: 0, c: 'upgrade', b: farm.id }]);
+  assert.equal(farm.q.length, 0, 'no Commerce, no upgrade');
+  both((x) => { x.s.players[0].techs.com1 = 1; });
+  go([{ p: 0, c: 'upgrade', b: farm.id }]);
+  assert.equal(farm.q.length, 1, 'Barter allows the first upgrade');
+
+  // Gather limit: lots of farmers can't beat it.
+  assert.ok(w.capOf(0, 'food') > GATHER_CAP.food, 'Barter raises the limit');
+  const farms = both((x) => { const l = []; for (let i = 0; i < 8; i++) l.push(place(x, 0, 'farm')); return l; });
+  const workers = both((x) => { const c = x.s.blds.find((b) => b.owner === 0 && b.type === 'city'), l = []; for (let i = 0; i < 40; i++) { const sp = x.spawnSpot(c); l.push(x.addUnit('citizen', 0, sp[0], sp[1])); } return l; });
+  farms[0].forEach((f, i) => go([{ p: 0, c: 'work', ids: workers[0].slice(i * 5, i * 5 + 5).map((u) => u.id), t: f.id }]));
+  for (let i = 0; i < 20 * 30; i++) go();
+  assert.ok(w.gathered[0].food <= w.capOf(0, 'food') + 1e-9, 'gathering is limited');
+  assert.ok(w.gathered[0].food >= w.capOf(0, 'food') - 1e-6, 'and those farmers do reach the limit');
+
+  // A Market raises the limit and swaps resources.
+  const before = w.capOf(0, 'food');
+  const [mkt] = both((x) => place(x, 0, 'market'));
+  assert.ok(Math.abs(w.capOf(0, 'food') - (before + GATHER_CAP.food * MARKET.capBonus)) < 1e-9, 'market raises the limit');
+  void mkt;
+  const m0 = w.s.players[0].res.metal, wood0 = w.s.players[0].res.wood;
+  go([{ p: 0, c: 'trade', from: 'wood', to: 'metal' }]);
+  assert.ok(w.s.players[0].res.metal > m0 + 50, 'trade gives metal');
+  assert.ok(w.s.players[0].res.wood < wood0 - 90, 'trade takes wood');
+
+  // Gifts go to allies only.
+  const oil1 = w.s.players[1].res.oil, oil2 = w.s.players[2].res.oil;
+  go([{ p: 0, c: 'gift', to: 1, res: 'oil', amt: 100 }, { p: 0, c: 'gift', to: 2, res: 'oil', amt: 100 }]);
+  assert.equal(w.s.players[1].res.oil, oil1 + 100, 'ally got the gift');
+  assert.equal(w.s.players[2].res.oil, oil2, 'enemy did not');
+
+  // Shift-queued moves.
+  const sol = both((x) => { const c = x.s.blds.find((b) => b.owner === 0 && b.type === 'city'); return x.addUnit('infantry', 0, c.x + 5, c.y + 5); });
+  const sx = sol[0].x, sy = sol[0].y;
+  go([{ p: 0, c: 'move', ids: [sol[0].id], x: sx + 3, y: sy }]);
+  go([{ p: 0, c: 'move', ids: [sol[0].id], x: sx + 3, y: sy + 3, q: true }]);
+  assert.equal(sol[0].wp.length, 1, 'stop is queued');
+  for (let i = 0; i < 20 * 15; i++) go();
+  assert.equal(sol[0].wp, undefined, 'stop was used');
+  assert.ok(Math.abs(sol[0].y - (sy + 3)) < 2.5, `went on to the second stop (${sol[0].y} vs ${sy + 3})`);
+
+  // Only one of each wonder, and the setting turns them off.
+  both((x) => { for (const pl of x.s.players) { pl.age = 4; pl.techs.sci4 = 1; pl.techs.com5 = 1; } });
+  const [pyr] = both((x) => place(x, 0, 'pyramids'));
+  const c1 = w.s.blds.find((b) => b.owner === 1 && b.type === 'city');
+  let tried = false;
+  for (let r = 3; r < 16 && !tried; r++) for (let dx = -r; dx <= r && !tried; dx++) { const res = w.canPlace(1, 'pyramids', c1.x + dx, c1.y + r); if (!res.ok && /already|one/i.test(res.why || '')) tried = true; }
+  assert.ok(tried, 'second Pyramid refused');
+  assert.ok(w.s.players[0].w.pyramids, 'pyramid counted');
+  const pop0 = w.popCap(0);
+  assert.ok(pop0 > 0);
+  void pyr;
+  const off = new World(st({ wonders: false }));
+  const oc = off.s.blds.find((b) => b.owner === 0 && b.type === 'city');
+  off.s.players[0].age = 4;
+  assert.equal(off.canPlace(0, 'pyramids', oc.x + 6, oc.y + 6).ok, false, 'wonders can be off');
+
+  // The laser hurts enemies, not allies, and needs to recharge.
+  const [las] = both((x) => place(x, 0, 'laser'));
+  const foe = both((x) => x.addUnit('infantry', 2, 30, 30));
+  const pal = both((x) => x.addUnit('infantry', 1, 31, 30));
+  go([{ p: 0, c: 'laser', b: las.id, x: 30, y: 30 }]);
+  assert.equal(w.s.strikes.length, 0, 'still charging after being built');
+  both((x) => { x.s.blds.find((b) => b.id === las.id).ready = 0; });
+  go([{ p: 0, c: 'laser', b: las.id, x: 30, y: 30 }]);
+  assert.equal(w.s.strikes.length, 1, 'laser fired');
+  const hp0 = foe[0].hp, palHp = pal[0].hp;
+  for (let i = 0; i < (LASER.delay + 0.2) * 20; i++) go();
+  assert.ok(foe[0].hp < hp0 * 0.5, 'enemy was burned');
+  assert.ok(pal[0].hp > palHp * 0.5, 'ally is safe from the laser');
+
+  // Moon Rocket: a countdown, then a win. Losing it stops the countdown.
+  assert.equal(w.hash(), w2.hash(), 'wonders out of sync');
+  const r = new World(st(), JSON.parse(JSON.stringify(w.serialize())));
+  assert.equal(r.hash(), w.hash(), 'wonders save/load');
+  const [rk] = both((x) => place(x, 2, 'rocket'));
+  assert.ok(rk.launchAt > w.s.tick, 'countdown started');
+  assert.equal(rk.launchAt - w.s.tick, ROCKET.countdown * 20);
+  both((x) => { const b = x.s.blds.find((q) => q.id === rk.id); b.launchAt = x.s.tick + 40; });
+  for (let i = 0; i < 60; i++) go();
+  assert.ok(w.s.over && w.s.over.rocket && w.s.over.winnerTeam === 1, 'rocket wins the game');
+  console.log('wonders ok: limits, market, gifts, waypoints, laser, rocket');
+}
+
+// ---------- bots: two copies given the same commands stay identical, and bots really play ----------
+{
+  const st = () => ({
+    seed: 2024,
+    players: [{ name: 'A', color: '#f00', team: 0, nation: 'germany' }, { name: 'B', color: '#00f', team: 1, nation: 'pakistan' }, { name: 'C', color: '#0f0', team: 2, nation: 'taiwan' }],
+    settings: {},
+  });
+  const w = new World(st()), w2 = new World(st());
+  const bots = [new Bot(w, 0, 'easy'), new Bot(w, 1, 'normal'), new Bot(w, 2, 'hard')];
+  for (let i = 0; i < 20 * 60 * 6; i++) {
+    const cmds = bots.flatMap((b) => b.tick(w));
+    w.step(cmds); w2.step(cmds);
+    if (i % 600 === 0) assert.equal(w.hash(), w2.hash(), `bot game out of sync at tick ${i}`);
+  }
+  assert.equal(w.hash(), w2.hash(), 'bot game out of sync');
+  const count = (p) => w.s.units.filter((u) => u.owner === p).length;
+  for (const p of [0, 1, 2]) assert.ok(count(p) > 8, `bot ${p} built up (${count(p)} units)`);
+  console.log(`bots ok: units after 6 min, easy ${count(0)}, normal ${count(1)}, hard ${count(2)}`);
 }
 
 console.log('ALL TESTS PASSED');

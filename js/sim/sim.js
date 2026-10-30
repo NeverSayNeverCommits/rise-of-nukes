@@ -3,7 +3,8 @@
 import {
   RES, AGES, AGE_UP, GATHER_RATE, CITY_INCOME, BUILD_RATE, POP_MAX, CITY_MIN_DIST, ATTRITION,
   FALLOUT_DMG, MULT, UNITS, BLDS, TECHS, NUKE, START_RES, MAP_SIZES, cityLimit, cityRadius, techSum, gatherMult,
-  forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime,
+  forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime, techMissing, commerceLevel, tradeRate,
+  gatherCap, MARKET, LASER, ROCKET, TERRACOTTA,
 } from './data.js';
 import { NATIONS, NATION_KEYS, NATION_UNIQUE, nationOf, nbonus } from './nations.js';
 import { genMap, T, DEP } from './map.js';
@@ -16,7 +17,7 @@ export const DT = TICK_MS / 1000;
 const CELL = 2; // spatial bucket size in tiles
 
 export function defaultSettings() {
-  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on', silly: true };
+  return { mapSize: 'normal', resources: 'normal', startAge: 0, doomsday: 8, fog: 'on', silly: true, wonders: true, speed: 1 };
 }
 
 export class World {
@@ -47,8 +48,12 @@ export class World {
         res: { ...res }, techs: {}, pending: {}, alive: true, nukes: 0, kills: 0, lost: 0,
         st: { gath: { food: 0, wood: 0, metal: 0, oil: 0 }, built: 0, cows: 0, crates: 0, caps: 0, razed: 0, promos: 0 },
       })),
-      units: [], blds: [], missiles: [], fallout: [], doom: 0, over: null,
+      units: [], blds: [], missiles: [], fallout: [], strikes: [], doom: 0, over: null,
     };
+    // Starting in a later age: you already know the Science and Commerce of the ages before it.
+    for (const pl of this.s.players) {
+      for (let i = 1; i <= pl.age; i++) { pl.techs[`sci${i}`] = 1; pl.techs[`com${i}`] = 1; }
+    }
     this.rebuild();
     this.map.starts.forEach(([sx, sy], p) => {
       const c = this.addBld('city', p, sx - 1, sy - 1, true);
@@ -88,6 +93,8 @@ export class World {
     this.recalcTerritory(true);
     this.cellsW = Math.ceil(W / CELL); this.cellsH = Math.ceil(H / CELL);
     this.rates = this.s.players.map(() => ({ food: 0, wood: 0, metal: 0, oil: 0 }));
+    this.gathered = this.s.players.map(() => ({ food: 0, wood: 0, metal: 0, oil: 0 }));
+    this.s.strikes = this.s.strikes || [];
   }
 
   // ---------- helpers ----------
@@ -119,7 +126,7 @@ export class World {
       c = this.statCache[p] = {};
       const pl = this.s.players[p];
       const hpB = 1 + techSum(pl, 'hp'), atkB = 1 + techSum(pl, 'atk'), spB = 1 + techSum(pl, 'speed');
-      const trainF = 1 - nbonus(pl, 'trainTime');
+      const trainF = (1 - nbonus(pl, 'trainTime')) * (pl.w && pl.w.colosseum ? 0.8 : 1);
       const uniq = NATION_UNIQUE[pl.nation] || {};
       for (const k in UNITS) {
         const d = UNITS[k], a = pl.age, mil = d.cls !== 'cit';
@@ -171,10 +178,18 @@ export class World {
   popCap(p) {
     const pl = this.s.players[p];
     let n = 0;
-    const per = BLDS.city.pop + techSum(pl, 'popPerCity') + nbonus(pl, 'popPerCity');
+    const per = BLDS.city.pop + techSum(pl, 'popPerCity') + nbonus(pl, 'popPerCity') + (pl.w && pl.w.pyramids ? 10 : 0);
     for (const b of this.s.blds) if (b.owner === p && b.type === 'city' && b.done) n += per;
     return Math.min(POP_MAX, n);
   }
+  // How many Markets count towards the gather limit (one per city).
+  marketCount(p) {
+    let m = 0, c = 0;
+    for (const b of this.s.blds) if (b.owner === p && b.done) { if (b.type === 'market') m++; else if (b.type === 'city') c++; }
+    return Math.min(m, c);
+  }
+  // The most of this resource player p's workers can bring in per second.
+  capOf(p, res) { return gatherCap(this.s.players[p], res, this.marketCount(p)); }
   cityCount(p) {
     let n = 0;
     for (const b of this.s.blds) if (b.owner === p && b.type === 'city') n++;
@@ -292,6 +307,11 @@ export class World {
       return { ok: false, why: 'Keep deposits free for mines and oil wells' };
     }
     const cx = x + d.size / 2, cy = y + d.size / 2;
+    if (d.wonder) {
+      if (this.settings.wonders === false) return { ok: false, why: 'Wonders are switched off in this game' };
+      const had = this.s.blds.find((b) => b.type === type);
+      if (had) return { ok: false, why: `${this.s.players[had.owner].name} already has the ${d.names[0]}` };
+    }
     if (type === 'city') {
       if (this.cityCount(p) >= cityLimit(pl)) return { ok: false, why: `City limit reached (${cityLimit(pl)}). Advance an age or research Civics.` };
       for (const b of this.s.blds) {
@@ -368,11 +388,18 @@ export class World {
     if (!pl || !pl.alive || this.s.over) return;
     const ownUnits = () => (cmd.ids || []).map((id) => this.get(id)).filter((u) => u && u.kind === 'u' && u.owner === p && u.hp > 0);
     const ownBld = () => { const b = this.get(cmd.b); return b && b.kind === 'b' && b.owner === p && b.hp > 0 ? b : null; };
+    // A new order wipes queued waypoints, unless it is being queued too.
+    if (!cmd.q && cmd.ids) for (const u of ownUnits()) if (u.wp) delete u.wp;
 
     switch (cmd.c) {
       case 'move': {
         const us = ownUnits();
-        this.groupMove(us, cmd.x, cmd.y, !!cmd.am);
+        if (cmd.q) {
+          // Shift+click: go there after finishing the current move.
+          const later = us.filter((u) => u.ord && (u.ord.k === 'move' || u.ord.k === 'attack' || u.ord.k === 'rearm'));
+          for (const u of later) { u.wp = u.wp || []; if (u.wp.length < 16) u.wp.push({ x: cmd.x, y: cmd.y, am: !!cmd.am }); }
+          this.groupMove(us.filter((u) => !later.includes(u)), cmd.x, cmd.y, !!cmd.am);
+        } else this.groupMove(us, cmd.x, cmd.y, !!cmd.am);
         break;
       }
       case 'attack': {
@@ -432,6 +459,7 @@ export class World {
         if (cmd.tech === 'age') {
           if (b.type !== 'city' || pl.age >= AGES.length - 1 || pl.pending.age) break;
           const up = AGE_UP[pl.age];
+          if (!pl.techs[up.needs]) { this.event({ type: 'error', p, msg: `Research ${TECHS[up.needs].name} at a Library first` }); break; }
           if (!this.canAfford(p, up.cost)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
           this.pay(p, up.cost);
           pl.pending.age = 1;
@@ -440,7 +468,7 @@ export class World {
         }
         const t = TECHS[cmd.tech];
         if (!t || !BLDS[b.type].research || pl.techs[cmd.tech] || pl.pending[cmd.tech]) break;
-        if (pl.age < t.age || (t.req && !pl.techs[t.req]) || !forNation(pl, t)) break;
+        if (pl.age < t.age || techMissing(pl, t).length || !forNation(pl, t)) break;
         const tc = techCost(pl, cmd.tech), tt = techTime(pl, cmd.tech);
         if (!this.canAfford(p, tc)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
         this.pay(p, tc);
@@ -452,7 +480,7 @@ export class World {
         const b = ownBld();
         if (!b || !b.done || !UPGRADE[b.type]) break;
         const lvl = (b.lvl || 0) + 1;
-        if (lvl > pl.age || b.q.some((it) => it.k === 'upg')) break;
+        if (lvl > pl.age || lvl > commerceLevel(pl) || b.q.some((it) => it.k === 'upg')) break;
         const cost = upgradeCost(b.type, lvl);
         if (!this.canAfford(p, cost)) { this.event({ type: 'error', p, msg: 'Not enough resources' }); break; }
         this.pay(p, cost);
@@ -488,6 +516,34 @@ export class World {
         this.s.missiles.push({ id: this.newId(), owner: p, sx, sy, x: cmd.x, y: cmd.y, t: 0, dur });
         pl.nukes++;
         this.event({ type: 'launch', p, x: cmd.x, y: cmd.y, dur });
+        break;
+      }
+      case 'trade': {
+        // Market: swap 100 of one resource for some of another.
+        if (!RES.includes(cmd.from) || !RES.includes(cmd.to) || cmd.from === cmd.to) break;
+        if (!this.s.blds.some((b) => b.owner === p && b.type === 'market' && b.done && b.hp > 0)) break;
+        if (pl.res[cmd.from] < MARKET.trade) { this.event({ type: 'error', p, msg: `You need ${MARKET.trade} ${cmd.from} to trade` }); break; }
+        pl.res[cmd.from] -= MARKET.trade;
+        pl.res[cmd.to] += Math.floor(MARKET.trade * tradeRate(pl));
+        this.event({ type: 'traded', p, from: cmd.from, to: cmd.to });
+        break;
+      }
+      case 'gift': {
+        // Send resources to an ally.
+        const to = this.s.players[cmd.to];
+        if (!to || !to.alive || cmd.to === p || !this.ally(p, cmd.to) || !RES.includes(cmd.res)) break;
+        const amt = Math.min(Math.floor(pl.res[cmd.res]), Math.max(0, Math.min(1000, cmd.amt | 0)));
+        if (amt <= 0) { this.event({ type: 'error', p, msg: `You have no ${cmd.res} to send` }); break; }
+        pl.res[cmd.res] -= amt; to.res[cmd.res] += amt;
+        this.event({ type: 'gift', p, to: cmd.to, res: cmd.res, amt });
+        break;
+      }
+      case 'laser': {
+        const b = ownBld();
+        if (!b || b.type !== 'laser' || !b.done || (b.ready || 0) > this.s.tick) break;
+        b.ready = this.s.tick + Math.round(LASER.every / DT);
+        this.s.strikes.push({ p, x: +cmd.x, y: +cmd.y, at: this.s.tick + Math.round(LASER.delay / DT) });
+        this.event({ type: 'laserAim', p, x: +cmd.x, y: +cmd.y, sx: b.x + 2, sy: b.y + 2, delay: LASER.delay });
         break;
       }
       case 'resign': {
@@ -542,6 +598,9 @@ export class World {
     for (const c of cmds) this.apply(c);
     s.tick++;
     this.rates = s.players.map(() => ({ food: 0, wood: 0, metal: 0, oil: 0 }));
+    // What workers have brought in this tick, and the limit (see GATHER_CAP in data.js).
+    this.gathered = s.players.map(() => ({ food: 0, wood: 0, metal: 0, oil: 0 }));
+    this.caps = s.players.map((_, p) => { const c = {}; for (const k of RES) c[k] = this.capOf(p, k); return c; });
 
     this.pathBudget = 24;
     const m = s.mods || {};
@@ -560,6 +619,7 @@ export class World {
     this.capNow = s.players.map((_, p) => this.popCap(p));
     for (const b of s.blds) if (b.hp > 0) this.updateBld(b);
     this.updateMissiles();
+    this.updateStrikes();
     this.cityIncome();
     this.hazards();
     this.cleanup();
@@ -801,7 +861,7 @@ export class World {
       }
     }
 
-    if (!o) return;
+    if (!o) { this.nextWaypoint(u); return; }
     if (o.k === 'move') {
       if (!u.path.length) {
         if (u.rep > 0) { u.rep--; return; }
@@ -845,7 +905,11 @@ export class World {
         if (b.prog >= d.time) this.finishBld(b);
       } else if (d.gather) {
         const pl = this.s.players[u.owner];
-        const amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather) * this.gathMul[d.gather] * this.lvlMul(b);
+        let amt = GATHER_RATE[d.gather] * gatherMult(pl, d.gather) * this.gathMul[d.gather] * this.lvlMul(b);
+        // The gather limit: anything over it this tick is lost.
+        const g = this.gathered[u.owner];
+        amt = Math.max(0, Math.min(amt, this.caps[u.owner][d.gather] - g[d.gather]));
+        g[d.gather] += amt;
         pl.res[d.gather] += amt * DT;
         pl.st.gath[d.gather] += amt * DT;
         this.rates[u.owner][d.gather] += amt;
@@ -855,6 +919,14 @@ export class World {
         this.setOrder(u, null);
       }
     }
+  }
+
+  // Queued Shift+click orders: when one move is done, start the next.
+  nextWaypoint(u) {
+    if (!u.wp) return;
+    const n = u.wp.shift();
+    if (!u.wp.length) delete u.wp;
+    if (n) this.setOrder(u, { k: 'move', x: n.x, y: n.y, am: n.am });
   }
 
   // ---------- planes ----------
@@ -894,6 +966,7 @@ export class World {
     }
     if (!o) {
       if (st.bomb && !u.ammo) u.ord = { k: 'rearm' };
+      else this.nextWaypoint(u);
       return;
     }
     if (o.k === 'move') { if (this.fly(u, o.x, o.y, st.speed, 0)) u.ord = null; return; }
@@ -952,6 +1025,17 @@ export class World {
     b.done = true; b.prog = d.time;
     this.s.players[b.owner].st.built++;
     this.event({ type: 'built', p: b.owner, id: b.id, btype: b.type, x: b.x + b.size / 2, y: b.y + b.size / 2 });
+    if (d.wonder) {
+      const pl = this.s.players[b.owner];
+      pl.w = pl.w || {};
+      pl.w[b.type] = 1;
+      pl.st.wonders = (pl.st.wonders || 0) + 1;
+      this.refreshStats(b.owner);
+      if (b.type === 'terracotta') b.next = this.s.tick + Math.round(TERRACOTTA.every / DT);
+      if (b.type === 'laser') b.ready = this.s.tick + Math.round(LASER.charge / DT);
+      if (b.type === 'rocket') b.launchAt = this.s.tick + Math.round(ROCKET.countdown / DT);
+      this.event({ type: 'wonder', p: b.owner, btype: b.type, x: b.x + 2, y: b.y + 2, id: b.id });
+    }
     if (b.type === 'city') {
       const pl = this.s.players[b.owner], list = nationOf(pl).cities;
       const n = pl.cityN || 1;
@@ -1030,6 +1114,8 @@ export class World {
       }
     }
 
+    if (d.wonder) this.updateWonder(b, pl);
+
     // Cities and towers shoot.
     if (d.atk) {
       if (b.cd > 0) b.cd -= DT;
@@ -1051,6 +1137,41 @@ export class World {
         this.damage(t, d.atk * mul, p);
       }
     }
+  }
+
+  updateWonder(b, pl) {
+    const s = this.s;
+    if (b.type === 'terracotta' && s.tick >= b.next) {
+      b.next = s.tick + Math.round(TERRACOTTA.every / DT);
+      if (this.popNow[b.owner] < this.capNow[b.owner]) {
+        const age = pl.age, type = this.stats(b.owner, 'infantry').atk >= this.stats(b.owner, 'ranged').atk ? 'infantry' : 'ranged';
+        this.spawnUnit(b, type);
+        this.event({ type: 'terracotta', p: b.owner, x: b.x + 2, y: b.y + 4, age });
+      }
+    } else if (b.type === 'rocket' && s.tick >= b.launchAt && !s.over) {
+      s.over = { winnerTeam: pl.team, rocket: true, p: b.owner, tick: s.tick };
+      this.event({ type: 'rocketWin', p: b.owner, x: b.x + 2, y: b.y + 2, team: pl.team });
+    }
+  }
+
+  // The Orbital Laser's beam arrives.
+  updateStrikes() {
+    const s = this.s;
+    if (!s.strikes.length) return;
+    s.strikes = s.strikes.filter((k) => {
+      if (k.at > s.tick) return true;
+      const r = LASER.radius, r2 = r * r;
+      this.event({ type: 'laser', p: k.p, x: k.x, y: k.y, r });
+      for (const u of s.units) {
+        if (u.hp <= 0 || !this.enemy(k.p, u.owner)) continue;
+        const dx = u.x - k.x, dy = u.y - k.y;
+        if (dx * dx + dy * dy <= r2) this.damage(u, this.uMax(u) * LASER.unitDmg, k.p);
+      }
+      for (const b of s.blds) {
+        if (b.hp > 0 && this.enemy(k.p, b.owner) && this.edgeDist(k.x, k.y, b) <= r) this.damage(b, this.bldMaxHp(b) * LASER.bldDmg, k.p);
+      }
+      return false;
+    });
   }
 
   finishItem(b, it) {
@@ -1083,6 +1204,9 @@ export class World {
     const spot = this.spawnSpot(b);
     const u = this.addUnit(type, p, spot[0], spot[1]);
     this.popNow[p]++;
+    if (this.s.players[p].w && this.s.players[p].w.colosseum && UNITS[type].cls !== 'cit') {
+      u.rank = 1; u.kills = 3; u.hp = this.uMax(u);
+    }
     if (b.rally) {
       const rt = b.rally.t ? this.get(b.rally.t) : null;
       if (rt && rt.hp > 0) {
@@ -1092,7 +1216,23 @@ export class World {
         u.ord = { k: 'move', x: b.rally.x, y: b.rally.y, am: u.type !== 'citizen' };
       }
     }
+    if (!u.ord && u.type === 'citizen') this.autoWork(u);
     this.event({ type: 'trained', p, id: u.id, utype: u.type });
+  }
+
+  // New citizens with no rally point walk to the nearest gather building that has room.
+  autoWork(u) {
+    let best = null, bd = 1e9;
+    const count = this.workerCount || new Map();
+    for (const b of this.s.blds) {
+      if (b.owner !== u.owner || !b.done || b.hp <= 0 || !BLDS[b.type].gather) continue;
+      if ((count.get(b.id) || 0) >= this.slots(b)) continue;
+      const d = this.edgeDist(u.x, u.y, b);
+      if (d < bd) { bd = d; best = b; }
+    }
+    if (!best) return;
+    count.set(best.id, (count.get(best.id) || 0) + 1);
+    this.setOrder(u, { k: 'work', t: best.id });
   }
 
   spawnSpot(b) {
@@ -1116,6 +1256,11 @@ export class World {
         this.rates[b.owner][k] += CITY_INCOME[k] * m;
       }
     }
+    // The Golden Cow gives everything, a little.
+    this.s.players.forEach((pl, p) => {
+      if (!pl.w || !pl.w.goldencow) return;
+      for (const k of RES) { pl.res[k] += 2 * DT; this.rates[p][k] += 2; }
+    });
   }
 
   hazards() {
@@ -1254,6 +1399,12 @@ export class World {
         this.markBld(b, false);
         this.byId.delete(b.id);
         if (b.lastAtk >= 0 && b.lastAtk !== b.owner && s.players[b.lastAtk]) s.players[b.lastAtk].st.razed++;
+        if (BLDS[b.type].wonder && b.done) {
+          const pl = s.players[b.owner];
+          if (pl.w) delete pl.w[b.type];
+          this.statCache[b.owner] = null;
+          this.event({ type: 'wonderLost', p: b.owner, by: b.lastAtk, btype: b.type, x: b.x + 2, y: b.y + 2 });
+        }
         this.event({ type: 'destroyed', p: b.owner, x: b.x + b.size / 2, y: b.y + b.size / 2, size: b.size, btype: b.type });
         if (b.type === 'city') terrChanged = true;
       }
@@ -1332,7 +1483,7 @@ export class World {
     for (const b of s.blds) { mix(b.id); mix(b.owner); mix(Math.round(b.hp * 100)); mix(b.q.length); mix(b.lvl || 0); }
     for (const p of s.players) for (const k of RES) mix(Math.round(p.res[k] * 100));
     for (const c of s.critters) { mix(c.id); mix(Math.round(c.x * 1000)); mix(Math.round(c.y * 1000)); mix(Math.round(c.hp * 100)); }
-    mix(s.crates.length); mix(s.meteors.length);
+    mix(s.crates.length); mix(s.meteors.length); mix(s.strikes.length);
     return h;
   }
 }

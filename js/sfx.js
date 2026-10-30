@@ -258,6 +258,21 @@ const S = {
       tone(rnd(55, 75), 0.5, { vol: 0.45 * v, slide: 30, when: w, pan: o.pan });
     }
   },
+  ping: () => { tone(1568, 0.14, { type: 'sine', vol: 0.3 }); tone(2093, 0.3, { type: 'sine', vol: 0.25, when: 0.12 }); },
+  wonder: () => { // choir-like chord with a slow swell and a bell on top
+    [196, 294, 392, 494, 587].forEach((f, i) => { tone(f, 3.2, { type: 'sawtooth', vol: 0.09, lp: 1800, attack: 0.5, when: i * 0.08, vib: [5, 3] }); });
+    [1047, 1319, 1568, 2093].forEach((f, i) => tone(f, 1.6, { vol: 0.1, when: 1.2 + i * 0.14, attack: 0.002 }));
+    noise(2, { freq: 7000, type: 'highpass', vol: 0.08, when: 1.2 });
+  },
+  laser: (o = { v: 1 }) => {
+    tone(2600, 0.9, { type: 'sawtooth', vol: 0.18 * o.v, slide: 120, lp: 5000, pan: o.pan });
+    tone(90, 1.1, { type: 'square', vol: 0.3 * o.v, slide: 40, lp: 800, pan: o.pan });
+    noise(1.1, { freq: 3000, slide: 200, vol: 0.7 * o.v, pan: o.pan, when: 0.05 });
+  },
+  charge: () => tone(120, 2.4, { type: 'sawtooth', vol: 0.14, slide: 1800, lp: 3500, attack: 0.4 }),
+  coin: () => { tone(1319, 0.06, { type: 'square', vol: 0.08 }); tone(1760, 0.2, { type: 'square', vol: 0.08, when: 0.06 }); },
+  medal: () => [659, 784, 988, 1319].forEach((f, i) => tone(f, 0.4, { type: 'triangle', vol: 0.18, when: i * 0.09 })),
+  liftoff: () => { noise(9, { freq: 200, slide: 1400, vol: 0.9, attack: 1.2 }); tone(45, 8, { type: 'sawtooth', vol: 0.3, slide: 90, lp: 300, attack: 1 }); },
   boing: () => tone(200, 0.4, { type: 'sine', vol: 0.3, slide: 900, vib: [18, 60] }),
   fireworks: () => { for (let i = 0; i < 6; i++) { const w = i * 0.35 + Math.random() * 0.2; tone(rnd(800, 1400), 0.6, { vol: 0.05, slide: 3000, when: w }); noise(0.5, { freq: 2500, vol: 0.35, when: w + 0.6 }); } },
 };

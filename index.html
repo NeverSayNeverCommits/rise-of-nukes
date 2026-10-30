@@ -17,7 +17,7 @@
       <label>Your name <input id="name" maxlength="16" placeholder="Commander" autocomplete="off"></label>
       <div class="row">
         <button id="btn-host" class="big">Host game</button>
-        <button id="btn-solo" class="big secondary">Practice alone</button>
+        <button id="btn-solo" class="big secondary">Play vs computer</button>
       </div>
       <div class="row join-row">
         <input id="join-code" maxlength="5" placeholder="ROOM CODE" autocomplete="off">
@@ -30,14 +30,16 @@
         <ul>
           <li><b>Left-click</b> to select, <b>drag</b> to box select. <b>Right-click</b> to move, attack, or send citizens to work.</li>
           <li>Citizens build. Pick a building on the bottom bar, then click the map. Farms go near cities, camps go next to forests, mines go on grey metal rocks, oil wells go on black oil pools.</li>
-          <li>Your <b>city</b> trains citizens and moves you to the <b>next age</b>. New ages unlock better units and buildings.</li>
+          <li>Your <b>city</b> trains citizens and moves you to the <b>next age</b>. New ages unlock better units and buildings. To advance you need a <b>Library</b> and its next <b>Science</b> tech.</li>
+          <li>Each resource has a <b>gather limit</b> shown at the top of the screen. <b>Commerce</b> techs at the Library raise it and unlock building upgrades. <b>Markets</b> raise it too, and let you swap resources.</li>
+          <li>Citizens can also build <b>Wonders</b> (J). There's only one of each in the game. Finish the <b>Moon Rocket</b>, keep it alive for 4 minutes, and your team wins.</li>
           <li>Build more cities to grow your <b>territory</b>. You can only build inside your borders. Enemy territory slowly hurts your units.</li>
           <li>Destroy an enemy city with soldiers nearby to <b>capture it</b>. Lose all your cities and you are out.</li>
           <li>In the <b>Atomic Age</b>, research the Manhattan Project at a Library, build a Missile Silo, build a nuke, and launch it. Watch the <b>Doomsday Clock</b>: too many nukes and everyone loses.</li>
           <li>Pick a <b>nation</b> in the lobby: Germany, Taiwan, Philippines or Pakistan. Each has a national power, unique units, a signature unit and a national tech.</li>
           <li>Watch out for cows, supply crates, meteors, frogs and other surprises. Kill cows for food. Do not let cows walk into nuclear fallout.</li>
-          <li>Type a number (1-29) in chat to send a spoken taunt. Try 11, 14 and 22.</li>
-          <li>Keys: arrow keys / screen edge / middle-drag to scroll, mouse wheel to zoom, <b>A</b> attack-move, <b>S</b> stop, <b>H</b> home, <b>.</b> next idle citizen, <b>Ctrl+1-9</b> make group, <b>1-9</b> select group, <b>Enter</b> chat, <b>Space</b> last alert.</li>
+          <li>Press <b>Enter</b> or 📣 for chat and spoken taunts. Start a message with <b>/t</b> to talk to your team only. <b>Z</b> or <b>Alt+click</b> pings the map for your allies.</li>
+          <li>Keys: arrow keys / screen edge / middle-drag to scroll, mouse wheel to zoom, <b>A</b> attack-move, <b>S</b> stop, <b>H</b> home, <b>.</b> next idle citizen, <b>,</b> idle soldiers, <b>Ctrl+A</b> whole army, <b>Shift+right-click</b> queue moves, <b>Ctrl+1-9</b> make group, <b>1-9</b> select group, <b>Enter</b> chat, <b>Space</b> last alert, <b>Pause</b> or <b>F8</b> pause.</li>
         </ul>
       </details>
     </div>
@@ -52,6 +54,11 @@
         <button id="btn-copy" class="small">Copy invite link</button>
       </div>
       <table id="player-table"><thead><tr><th>Player</th><th>Nation</th><th>Colour</th><th>Team</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="bot-row" class="row bot-row">
+        <button id="btn-add-bot" class="small">🤖 Add bot</button>
+        <select id="bot-level"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select>
+        <span class="hint">Play together against bots: put your friends on your team and the bots on another. Bots run on the host's computer.</span>
+      </div>
       <div id="nation-card" class="nation-card"></div>
       <div class="settings" id="settings">
         <label>Map size
@@ -68,6 +75,12 @@
         </label>
         <label>Fog of war
           <select data-set="fog"><option value="on">On</option><option value="explored">Map revealed</option><option value="off">Off</option></select>
+        </label>
+        <label>Game speed
+          <select data-set="speed"><option value="1">Normal (1x)</option><option value="1.25">Quick (1.25x)</option><option value="1.5">Fast (1.5x)</option><option value="2">Very fast (2x)</option></select>
+        </label>
+        <label>Wonders
+          <select data-set="wonders"><option value="true">On, including the Moon Rocket win</option><option value="false">Off: conquest only</option></select>
         </label>
         <label>Silly stuff
           <select data-set="silly"><option value="true">On: cows, crates, meteors…</option><option value="false">Off: serious war only</option></select>
@@ -93,6 +106,8 @@
         <span id="age-label"></span>
         <span id="doom" title="Doomsday Clock: when it hits the limit, everybody loses."></span>
         <span id="clock"></span>
+        <button id="btn-speed" class="small secondary" title="Game speed. Only the host can change it."></button>
+        <button id="btn-pause" class="small secondary" title="Pause for everyone (Pause or F8)">⏸</button>
         <button id="btn-taunts" class="small secondary" title="Chat and taunts (Enter)">📣</button>
         <button id="btn-full" class="small secondary" title="Fullscreen (F9). Makes screen-edge scrolling work on all sides.">⛶</button>
         <button id="btn-sound" class="small secondary" title="Sound and display settings">🔊</button>
@@ -100,6 +115,9 @@
       </div>
     </div>
     <div id="alerts"></div>
+    <div id="rocket-clock" class="hidden"></div>
+    <div id="banner" class="hidden"></div>
+    <div id="pause-note" class="hidden"></div>
     <div id="nuke-flash"></div>
     <div id="chat-log" class="log"></div>
     <input id="chat-input" class="hidden" placeholder="Chat, or pick a taunt. Enter sends, Esc cancels." maxlength="200">
@@ -122,8 +140,9 @@
       <div class="panel">
         <h2 id="over-title"></h2>
         <p id="over-text"></p>
+        <div id="over-graphs"></div>
         <div id="over-scores"></div>
-        <div class="row"><button id="btn-over-watch" class="big secondary">Keep watching</button><button id="btn-over-quit" class="big">Back to menu</button></div>
+        <div class="row"><button id="btn-over-watch" class="big secondary">Keep watching</button><button id="btn-over-again" class="big">🔁 Play again</button><button id="btn-over-quit" class="big secondary">Back to menu</button></div>
       </div>
     </div>
   </section>

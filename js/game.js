@@ -1,6 +1,7 @@
 // In-game user interface: mouse and keyboard input, the HUD, and alerts.
 import { Renderer } from './render.js';
-import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit, forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime, GATHER_RATE, gatherMult } from './sim/data.js';
+import { UNITS, BLDS, TECHS, TECH_ORDER, AGES, AGE_UP, NUKE, RES, RES_ICON, BUILD_ORDER, cityLimit, forNation, techCost, techTime, UPGRADE, upgradeCost, upgradeTime, GATHER_RATE, gatherMult, WONDERS, MARKET, LASER, tradeRate, techReqs, commerceLevel } from './sim/data.js';
+import { SPEEDS } from './session.js';
 import { NATIONS, nationOf } from './sim/nations.js';
 import { flagImg } from './flags.js';
 import { DT } from './sim/sim.js';
@@ -48,10 +49,18 @@ export class GameUI {
     this.firstBlood = false;
     this.nextMoo = performance.now() + 8000;
     this.lastPhase = '';
+    this.cardPage = null;    // 'wonders' while a citizen's wonder page is open
+    this.history = [];       // score and army over time, for the end screen
+    this.medals = [];        // medals I earned this game
+    this.medalIds = new Set();
+    this.rocketSaid = {};    // which countdown warnings have been given, per rocket
+    this.capSeen = {};       // when each gather limit warning was last shown
 
     const city = this.world.s.blds.find((b) => b.owner === this.me && b.type === 'city');
     if (city) this.r.centreOn(city.x + 1.5, city.y + 1.5);
     this.bind();
+    this.onSpeed(session.speed || 1, true);
+    this.onPause(!!session.paused, session.pausedBy);
     music.play();
     // Who is who.
     const nat = nationOf(this.pl);
@@ -67,6 +76,8 @@ export class GameUI {
   destroy() {
     this.running = false;
     music.stop();
+    clearTimeout(this.bannerTimer);
+    for (const id of ['game-over', 'game-menu', 'rocket-clock', 'banner', 'pause-note', 'tooltip']) $(id).classList.add('hidden');
     for (const [el, ev, fn, opt] of this.listeners) el.removeEventListener(ev, fn, opt);
   }
 
@@ -150,7 +161,8 @@ export class GameUI {
     on(mm, 'mousedown', (e) => {
       e.preventDefault();
       const [x, y] = mmMove(e);
-      if (e.button === 2) { this.contextAt(x, y, null); return; }
+      if (e.button === 2) { this.contextAt(x, y, null, e.shiftKey); return; }
+      if (e.altKey) { this.pingAt(x, y); return; }
       if (this.mode && this.mode.k === 'target') { this.targetAt(x, y, e.shiftKey); return; }
       this.r.centreOn(x, y); this.mouse.mm = true;
     });
@@ -164,6 +176,19 @@ export class GameUI {
     });
     on($('btn-quit'), 'click', () => { if (confirm('Quit to the main menu?')) this.onQuit(); });
     on($('btn-over-quit'), 'click', () => this.onQuit());
+    on($('btn-over-again'), 'click', () => this.session.backToLobby());
+    on($('btn-pause'), 'click', () => this.session.togglePause());
+    on($('btn-speed'), 'click', () => {
+      if (!this.session.isHost) { this.alert('Only the host can change the game speed', 'info'); return; }
+      this.session.setSpeed(SPEEDS[(SPEEDS.indexOf(this.session.speed) + 1) % SPEEDS.length]);
+    });
+    on($('rocket-clock'), 'click', () => { if (this.rocketPos) this.r.centreOn(...this.rocketPos); });
+    on($('score-table'), 'click', (e) => {
+      const g = e.target.closest('.gift');
+      if (!g) return;
+      sfx.click();
+      this.send({ c: 'gift', to: +g.dataset.to, res: g.dataset.res, amt: 100 });
+    });
     on($('btn-over-watch'), 'click', () => { $('game-over').classList.add('hidden'); this.r.spectate = true; });
     const ci = $('chat-input');
     on(ci, 'keydown', (e) => {
@@ -172,7 +197,12 @@ export class GameUI {
       if (e.key === 'Enter') {
         const pick = this.tauntPick;
         if (pick) this.sendTaunt(pick);
-        else { this.session.sendChat(ci.value); ci.value = ''; this.closeChat(); }
+        else {
+          // "/t hello" goes to your team only.
+          const m = ci.value.match(/^\/t(?:eam)?\s+(.+)/i);
+          if (m) this.session.sendChat(m[1], true); else this.session.sendChat(ci.value);
+          ci.value = ''; this.closeChat();
+        }
       }
       if (e.key === 'Escape') this.closeChat();
     });
@@ -265,6 +295,7 @@ export class GameUI {
       return;
     }
     if (e.button !== 0) return;
+    if (e.altKey) { this.pingAt(...this.r.toWorld(x, y)); return; }
     if (this.mode && this.mode.k === 'place') {
       const g = this.ghostAt(x, y);
       if (g.ok) {
@@ -362,8 +393,8 @@ export class GameUI {
         sfx.play('order');
         return;
       }
-      this.send({ c: 'move', ids: units.map((u) => u.id), x: wx, y: wy });
-      this.r.addMarker(wx, wy, '#7ee787');
+      this.send({ c: 'move', ids: units.map((u) => u.id), x: wx, y: wy, q: !!shift });
+      this.r.addMarker(wx, wy, shift ? '#b7f5bd' : '#7ee787');
       sfx.play('order');
       this.speak(units.find((u) => u.type !== 'citizen') || units[0], 'move');
       return;
@@ -379,13 +410,17 @@ export class GameUI {
     const m = this.mode;
     if (m.what === 'am') {
       const ids = this.mineSel().filter((e) => e.kind === 'u').map((u) => u.id);
-      this.send({ c: 'move', ids, x: wx, y: wy, am: true });
+      this.send({ c: 'move', ids, x: wx, y: wy, am: true, q: !!shift });
       this.r.addMarker(wx, wy, '#ff9900');
       sfx.play('order');
       const u0 = this.world.get(ids[0]);
       if (u0) this.speak(u0, 'attack');
     } else if (m.what === 'nuke') {
       this.send({ c: 'launch', b: m.b, x: wx, y: wy });
+    } else if (m.what === 'laser') {
+      this.send({ c: 'laser', b: m.b, x: wx, y: wy });
+      this.mode = null;
+      return;
     }
     if (!shift) this.mode = null;
   }
@@ -409,6 +444,7 @@ export class GameUI {
     if (k === 'Escape') {
       if (!$('settings-panel').classList.contains('hidden')) { $('settings-panel').classList.add('hidden'); return; }
       if (this.mode) this.mode = null;
+      else if (this.cardPage) this.cardPage = null;
       else if (!$('game-menu').classList.contains('hidden')) this.toggleMenu(false);
       else if (this.sel.size) this.sel.clear();
       else this.toggleMenu(true);
@@ -416,6 +452,9 @@ export class GameUI {
     }
     if (k === 'F10') { e.preventDefault(); this.toggleMenu(true); return; }
     if (k === 'F9') { e.preventDefault(); this.toggleFullscreen(); return; }
+    if (k === 'F8' || k === 'Pause') { e.preventDefault(); this.session.togglePause(); return; }
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'a') { e.preventDefault(); this.selectArmy(false); return; }
+    if (k === ',') { this.selectArmy(true); return; }
     if (/^[0-9]$/.test(k)) {
       const n = +k;
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.groups.set(n, [...this.sel]); this.alert(`Group ${n} set`, 'info'); return; }
@@ -433,7 +472,8 @@ export class GameUI {
     if (k === ' ') { e.preventDefault(); if (this.lastAlertPos) this.r.centreOn(...this.lastAlertPos); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const up = k.toUpperCase();
-    if (up === 'M') { const m = toggleMute(); this.alert(m ? 'Sound off' : 'Sound on', 'info'); return; }
+    if (up === 'Z') { if (this.mouse.inside) this.pingAt(...this.r.toWorld(this.mouse.x, this.mouse.y)); return; }
+    if (up === 'M' && !(this.mineSel().some((u) => u.type === 'citizen'))) { const m = toggleMute(); this.alert(m ? 'Sound off' : 'Sound on', 'info'); return; }
     // Command card hotkeys first (refresh the card so it matches the current selection).
     this.updateCard();
     const act = (this.cardActions || []).find((a) => a.key === up && a.enabled);
@@ -475,6 +515,55 @@ export class GameUI {
     this.r.centreOn(u.x, u.y);
   }
 
+  // Ctrl+A: the whole army. Comma: only the soldiers with nothing to do.
+  selectArmy(idleOnly) {
+    const list = this.s.units.filter((u) => u.owner === this.me && u.type !== 'citizen' && (!idleOnly || !u.ord));
+    if (!list.length) { this.alert(idleOnly ? 'No idle soldiers' : 'You have no soldiers', 'info'); return; }
+    this.sel = new Set(list.map((u) => u.id));
+    sfx.play('select');
+    if (idleOnly) { const u = list[this.idleIdx++ % list.length]; this.r.centreOn(u.x, u.y); }
+  }
+
+  // Show allies a spot on the map.
+  pingAt(x, y) {
+    const now = performance.now();
+    if (now - (this.lastPing || 0) < 700) return;
+    this.lastPing = now;
+    this.session.sendPing(x, y);
+  }
+  onPing(msg) {
+    const p = this.s.players[msg.p];
+    if (!p) return;
+    this.r.ping(msg.x, msg.y, p.color);
+    this.r.worldPing(msg.x, msg.y, p.color);
+    sfx.play('ping');
+    this.lastAlertPos = [msg.x, msg.y];
+    if (msg.p !== this.me) this.alert(`📍 ${p.name} marked a spot (Space to look)`, 'info');
+  }
+
+  onPause(on, name) {
+    $('btn-pause').textContent = on ? '▶' : '⏸';
+    $('pause-note').classList.toggle('hidden', !on);
+    if (on) $('pause-note').textContent = `⏸ ${name ? `${name} paused the game` : 'Game paused'}. Press F8 to carry on.`;
+  }
+  onSpeed(x, quiet) {
+    $('btn-speed').textContent = `⏩ ${x}×`;
+    this.r.speedNow = x;
+    if (!quiet) { this.alert(`Game speed: ${x}×`, 'info'); sfx.click(); }
+  }
+
+  // A big message across the middle of the screen.
+  banner(title, sub = '', kind = '') {
+    const el = $('banner');
+    el.className = kind;
+    el.style.animation = 'none';
+    el.innerHTML = `<div class="b-title">${esc(title)}</div>${sub ? `<div class="b-sub">${esc(sub)}</div>` : ''}`;
+    void el.offsetWidth; // restart the animation
+    el.style.animation = '';
+    clearTimeout(this.bannerTimer);
+    this.bannerTimer = setTimeout(() => el.classList.add('hidden'), 4500);
+  }
+
   toggleMenu(show) {
     $('game-menu').classList.toggle('hidden', !show);
     if (show) $('score-table').innerHTML = this.scoreHtml();
@@ -484,9 +573,13 @@ export class GameUI {
     const rows = this.s.players.map((p, i) => {
       const units = this.s.units.filter((u) => u.owner === i).length;
       const cities = this.s.blds.filter((b) => b.owner === i && b.type === 'city').length;
-      return `<tr><td><span class="swatch" style="background:${p.color}"></span>${flagImg(p.nation, 12)} ${esc(p.name)}${p.alive ? '' : ' 💀'}</td><td>${p.team + 1}</td><td>${AGES[p.age]}</td><td>${cities}</td><td>${units}</td><td>${p.kills}</td><td>${p.lost}</td><td>${p.nukes}</td></tr>`;
+      const lp = (this.session.lobby && this.session.lobby.players[i]) || {};
+      const tag = lp.bot || lp.takeover ? ' 🤖' : lp.online === false ? ' 🔌' : '';
+      const gifts = !this.s.over && this.pl.alive && p.alive && i !== this.me && this.world.ally(this.me, i)
+        ? `<div class="gifts">Send 100: ${RES.map((k) => `<button class="gift small secondary" data-to="${i}" data-res="${k}" title="Send 100 ${k} to ${esc(p.name)}">${RES_ICON[k]}</button>`).join('')}</div>` : '';
+      return `<tr><td><span class="swatch" style="background:${p.color}"></span>${flagImg(p.nation, 12)} ${esc(p.name)}${tag}${p.alive ? '' : ' 💀'}${gifts}</td><td>${p.team + 1}</td><td>${AGES[p.age]}</td><td>${cities}</td><td>${units}</td><td>${p.kills}</td><td>${p.lost}</td><td>${p.nukes}</td><td>${(p.st && p.st.wonders) || 0}</td></tr>`;
     }).join('');
-    return `<table class="scores"><tr><th>Player</th><th>Team</th><th>Age</th><th>Cities</th><th>Units</th><th>Kills</th><th>Lost</th><th>☢</th></tr>${rows}</table>`;
+    return `<table class="scores"><tr><th>Player</th><th>Team</th><th>Age</th><th>Cities</th><th>Units</th><th>Kills</th><th>Lost</th><th>☢</th><th>🏛</th></tr>${rows}</table>`;
   }
 
   awardsHtml() {
@@ -519,7 +612,7 @@ export class GameUI {
     el.className = 'line';
     const taunt = msg.p >= 0 && /^\d{1,2}$/.test(msg.text.trim()) ? TAUNTS[+msg.text.trim()] : null;
     if (msg.p < 0) { el.classList.add('sys'); el.textContent = msg.text; }
-    else el.innerHTML = `<b style="color:${esc(msg.color || '#fff')}">${esc(msg.name)}:</b> ${taunt ? `<i>📣 ${esc(msg.text.trim())}. ${esc(taunt)}</i>` : esc(msg.text)}`;
+    else el.innerHTML = `${msg.team ? '<span class="team-tag">[team]</span> ' : ''}<b style="color:${esc(msg.color || '#fff')}">${esc(msg.name)}:</b> ${taunt ? `<i>📣 ${esc(msg.text.trim())}. ${esc(taunt)}</i>` : esc(msg.text)}`;
     if (taunt) say(taunt, 10 + msg.p, this.tauntVoice(msg.p));
     else if (msg.p >= 0 && msg.p !== this.me) sfx.play('click');
     const log = $('chat-log');
@@ -638,6 +731,7 @@ export class GameUI {
         case 'age':
           if (e.p === me) {
             this.alert(`Welcome to the ${AGES[e.age]} Age!`, 'good');
+            this.banner(`The ${AGES[e.age]} Age`, 'New buildings, units and techs are ready', 'gold');
             sfx.age();
             say(`Welcome to the ${AGES[e.age]} age.`, 'announcer');
             for (const c of this.s.blds.filter((b) => b.owner === me && b.type === 'city')) this.r.fireworks(c.x + 1.5, c.y + 1.5, 3);
@@ -680,8 +774,8 @@ export class GameUI {
           break;
         }
         case 'captured':
-          if (e.p === me) { this.alert(`You captured ${e.name || 'a city'}!`, 'good', [e.x, e.y]); sfx.play('capture'); say(`We have captured ${e.name || 'a city'}.`, 'announcer'); }
-          else if (e.from === me) { this.alert(`${e.name || 'A city'} was captured by ${name(e.p)}!`, 'bad', [e.x, e.y]); sfx.attack(); say(`We have lost ${e.name || 'a city'}!`, 'announcer'); }
+          if (e.p === me) { this.alert(`You captured ${e.name || 'a city'}!`, 'good', [e.x, e.y]); this.banner(`${e.name || 'City'} captured!`, '', 'gold'); sfx.play('capture'); say(`We have captured ${e.name || 'a city'}.`, 'announcer'); }
+          else if (e.from === me) { this.alert(`${e.name || 'A city'} was captured by ${name(e.p)}!`, 'bad', [e.x, e.y]); this.banner(`${e.name || 'A city'} has fallen`, `Taken by ${name(e.p)}`, 'red'); sfx.attack(); say(`We have lost ${e.name || 'a city'}!`, 'announcer'); }
           else this.alert(`${name(e.p)} captured a city from ${name(e.from)}`, 'info');
           break;
         case 'convert':
@@ -715,7 +809,53 @@ export class GameUI {
         case 'eliminated':
           if (!fresh) break;
           this.alert(e.p === me ? 'You have been defeated.' : `${name(e.p)} has been defeated!`, e.p === me ? 'bad' : 'info');
-          if (e.p !== me) say(`${name(e.p)} has been eliminated.`, 'announcer');
+          if (e.p !== me) { this.banner(`${name(e.p)} is out`, '', 'red'); say(`${name(e.p)} has been eliminated.`, 'announcer'); }
+          break;
+        // ----- wonders, the laser and the market -----
+        case 'wonder': {
+          const d = BLDS[e.btype];
+          this.banner(`${d.names[0]}`, `${e.p === me ? 'You built a Wonder of the World' : `${name(e.p)} built a Wonder of the World`}. ${d.desc}`, 'gold');
+          this.alert(`${d.icon} ${e.p === me ? 'You' : name(e.p)} built the ${d.names[0]}`, e.p === me ? 'good' : 'info', [e.x, e.y]);
+          this.r.ping(e.x, e.y, '#ffd700');
+          sfx.play('wonder');
+          if (e.btype === 'rocket') {
+            this.lastAlertPos = [e.x, e.y];
+            this.alert(w.ally(me, e.p) ? '🚀 Defend the Moon Rocket for 4 minutes and you win! (Space to look)' : '🚀 Destroy the Moon Rocket or lose! (Space to look)', w.ally(me, e.p) ? 'good' : 'nuke');
+            say(w.ally(me, e.p) ? 'Our Moon Rocket is ready. Defend it for four minutes and we win.' : `${name(e.p)} is building a Moon Rocket. You have four minutes to destroy it.`, 'announcer', { interrupt: true });
+          } else say(`${name(e.p)} has built the ${d.names[0]}.`, 'announcer');
+          break;
+        }
+        case 'wonderLost': {
+          const d = BLDS[e.btype];
+          const lostMine = e.p === me;
+          this.banner(`${d.names[0]} destroyed`, lostMine ? 'Your wonder is gone' : `${name(e.p)} lost a wonder`, lostMine ? 'red' : '');
+          this.alert(`${d.icon} The ${d.names[0]} of ${name(e.p)} was destroyed`, lostMine ? 'bad' : 'info', [e.x, e.y]);
+          say(`The ${d.names[0]} has been destroyed.`, 'announcer');
+          break;
+        }
+        case 'laserAim':
+          this.lastAlertPos = [e.x, e.y];
+          this.r.ping(e.x, e.y, '#5ff0ff');
+          if (e.p === me) sfx.play('charge');
+          else if (seen) { this.alert('🛰️ Orbital laser! Move away from the circle!', 'bad', [e.x, e.y]); sfx.play('charge'); say('Orbital laser incoming!', 'announcer'); }
+          break;
+        case 'laser':
+          if (seen || e.p === me) { sfx.at('laser', e.x, e.y, 1.5); this.heat += 0.5; }
+          break;
+        case 'rocketWin':
+          this.banner('🚀 Lift-off!', `${name(e.p)} reached the Moon`, 'gold');
+          sfx.play('liftoff');
+          break;
+        case 'terracotta':
+          if (e.p === me && near(e.x, e.y)) sfx.at('trained', e.x, e.y, 0.5);
+          if (seen) this.r.float(e.x, e.y, '🗿 Reporting for duty', '#d9a77c');
+          break;
+        case 'traded':
+          if (e.p === me) sfx.play('coin');
+          break;
+        case 'gift':
+          if (e.to === me) { this.alert(`🎁 ${name(e.p)} sent you ${e.amt} ${e.res}`, 'good'); sfx.play('coin'); }
+          else if (e.p === me) { this.alert(`Sent ${e.amt} ${e.res} to ${name(e.to)}`, 'info'); sfx.play('coin'); }
           break;
         // ----- the silly stuff -----
         case 'silly': this.sillyEvent(e); break;
@@ -832,7 +972,9 @@ export class GameUI {
     };
     this.r.draw(ui);
 
-    if (t - this.lastHud > 120) { this.lastHud = t; this.updateHud(); }
+    if (t - this.lastHud > 120) { this.lastHud = t; this.updateHud(); this.updateRocketClock(); }
+    if (t - (this.lastMedal || 0) > 2000) { this.lastMedal = t; this.checkMedals(); }
+    this.sampleHistory();
     if (t - this.lastMini > 200) { this.lastMini = t; this.r.drawMinimap($('minimap')); }
     this.checkOver();
   }
@@ -895,6 +1037,12 @@ export class GameUI {
         this.showOver('☢ ARMAGEDDON ☢', 'The Doomsday Clock struck midnight. Too many nukes. Everybody loses. Well done, everyone.');
         say('Armageddon. Everybody loses. The cockroaches win.', 'announcer', { interrupt: true });
         sfx.play('defeat');
+      } else if (s.over.rocket) {
+        const win = s.players.filter((p) => p.team === s.over.winnerTeam).map((p) => p.name).join(' & ');
+        const mine = s.over.winnerTeam === this.pl.team;
+        this.showOver(mine ? 'VICTORY' : 'DEFEAT', mine ? 'Your Moon Rocket made it. Your team owns the Moon. Everyone else has to pay rent.' : `${win} launched the Moon Rocket. You had four minutes.`);
+        sfx.play(mine ? 'victory' : 'defeat');
+        say(mine ? 'Lift off. Victory!' : 'They reached the moon. We lose.', 'announcer', { interrupt: true });
       } else if (s.over.winnerTeam === this.pl.team) {
         this.showOver('VICTORY', 'Your enemies are defeated.');
         sfx.play('victory');
@@ -912,9 +1060,130 @@ export class GameUI {
   showOver(title, text) {
     $('over-title').textContent = title;
     $('over-text').textContent = text;
-    $('over-scores').innerHTML = this.scoreHtml() + this.awardsHtml();
+    $('over-scores').innerHTML = this.scoreHtml() + this.medalsHtml() + this.awardsHtml();
+    this.sampleHistory(true);
+    this.drawGraphs();
+    const again = $('btn-over-again'), host = this.session.isHost;
+    again.disabled = !host;
+    again.textContent = host ? '🔁 Play again' : 'Waiting for host…';
+    again.title = host ? 'Everyone goes back to the lobby' : 'Only the host can start another game';
     $('game-over').classList.remove('hidden');
     this.r.spectate = true;
+  }
+
+  // ---------- rocket countdown ----------
+  updateRocketClock() {
+    const b = this.s.blds.find((x) => x.type === 'rocket' && x.done && x.hp > 0);
+    const el = $('rocket-clock');
+    if (!b || this.s.over) { el.classList.add('hidden'); this.rocketPos = null; return; }
+    this.rocketPos = [b.x + 2, b.y + 2];
+    const left = Math.max(0, Math.ceil((b.launchAt - this.s.tick) * DT));
+    const owner = this.s.players[b.owner], ally = this.world.ally(this.me, b.owner);
+    el.classList.remove('hidden');
+    el.classList.toggle('danger', !ally);
+    el.classList.toggle('soon', left <= 60);
+    el.textContent = `🚀 ${b.owner === this.me ? 'Your' : `${owner.name}'s`} Moon Rocket launches in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    const said = (this.rocketSaid[b.id] ||= {});
+    for (const mark of [60, 10]) {
+      if (left <= mark && !said[mark]) {
+        said[mark] = true;
+        this.alert(`🚀 ${mark} seconds until lift-off!`, ally ? 'good' : 'nuke', this.rocketPos);
+        say(`${mark} seconds until lift off.`, 'announcer');
+      }
+    }
+  }
+
+  // ---------- medals ----------
+  // Small goals you can show off to your friends. Checked on your own screen, and announced in chat.
+  checkMedals() {
+    const pl = this.pl, me = this.me, s = this.s, w = this.world;
+    if (s.over || !pl.alive) return;
+    const army = s.units.filter((u) => u.owner === me && u.type !== 'citizen');
+    const cities = w.cityCount(me), st = pl.st || {};
+    const techs = Object.keys(pl.techs).length;
+    const capped = RES.filter((k) => this.isCapped(k)).length;
+    const list = [
+      ['city3', '🏙️', 'Empire Builder', '3 cities', cities >= 3],
+      ['city6', '🌆', 'Superpower', '6 cities', cities >= 6],
+      ['army50', '⚔️', 'Standing Army', '50 soldiers at once', army.length >= 50],
+      ['army100', '🎖️', 'Overkill', '100 soldiers at once', army.length >= 100],
+      ['hero', '⭐', 'Living Legend', 'a ★★★ soldier', army.some((u) => u.rank >= 3)],
+      ['wonder', '🏛️', 'Wonder of the World', 'built a wonder', (st.wonders || 0) >= 1],
+      ['wonder3', '🗺️', 'Wonder Collector', 'built 3 wonders', (st.wonders || 0) >= 3],
+      ['cows', '🥩', 'Steak Night', 'hunted 10 cows', (st.cows || 0) >= 10],
+      ['techs', '📚', 'Bookworm', '15 techs', techs >= 15],
+      ['nuke', '☢️', 'Oppenheimer', 'launched a nuke', pl.nukes >= 1],
+      ['caps', '🚩', 'Conqueror', 'captured 3 cities', (st.caps || 0) >= 3],
+      ['kills', '💀', 'Grim Reaper', '100 kills', pl.kills >= 100],
+      ['atomic', '⚛️', 'Atomic Age', 'reached the last age', pl.age >= 4],
+      ['maxed', '🏭', 'Full Steam', 'hit 3 gather limits at once', capped >= 3],
+    ];
+    for (const [id, icon, title, text, done] of list) {
+      if (!done || this.medalIds.has(id)) continue;
+      this.medalIds.add(id);
+      this.medals.push({ icon, title, text });
+      this.alert(`${icon} Medal: ${title} (${text})`, 'good');
+      sfx.play('medal');
+      this.session.sendChat(`🏅 ${title}: ${text}`);
+    }
+  }
+  medalsHtml() {
+    if (!this.medals.length) return '';
+    return `<h3 class="awards-title">🏅 Your medals</h3><div class="medals">${this.medals.map((m) => `<span class="medal" title="${esc(m.text)}">${m.icon} ${esc(m.title)}</span>`).join('')}</div>`;
+  }
+
+  // ---------- graphs for the end screen ----------
+  sampleHistory(force) {
+    const s = this.s, every = Math.round(15 / DT);
+    if (!force && (s.tick % every || this.lastSample === s.tick)) return;
+    this.lastSample = s.tick;
+    const army = s.players.map(() => 0), score = s.players.map((p) => p.age * 150 + p.kills * 2 + Object.keys(p.techs).length * 15 + ((p.st && p.st.wonders) || 0) * 200);
+    for (const u of s.units) { if (u.type !== 'citizen') army[u.owner]++; score[u.owner] += u.type === 'citizen' ? 2 : 5; }
+    for (const b of s.blds) if (b.done) score[b.owner] += b.type === 'city' ? 120 : 10;
+    this.history.push({ t: s.tick * DT, score, army });
+  }
+  drawGraphs() {
+    const box = $('over-graphs');
+    box.innerHTML = '';
+    if (this.history.length < 3) return;
+    const ps = this.s.players;
+    for (const [key, title] of [['score', 'Score'], ['army', 'Army size']]) {
+      const c = document.createElement('canvas');
+      c.width = 340; c.height = 130;
+      const wrap = document.createElement('div');
+      wrap.className = 'graph';
+      wrap.innerHTML = `<div class="g-title">${title}</div>`;
+      wrap.appendChild(c); box.appendChild(wrap);
+      const g = c.getContext('2d');
+      const pad = 26, W = c.width - pad - 6, H = c.height - 18;
+      const tMax = this.history[this.history.length - 1].t || 1;
+      const yMax = Math.max(1, ...this.history.map((h) => Math.max(...h[key])));
+      g.strokeStyle = '#30363d'; g.fillStyle = '#9aa4ad'; g.font = '10px system-ui'; g.lineWidth = 1;
+      for (let i = 0; i <= 2; i++) {
+        const y = 3 + (H * i) / 2;
+        g.beginPath(); g.moveTo(pad, y); g.lineTo(pad + W, y); g.stroke();
+        g.textAlign = 'right'; g.textBaseline = 'middle';
+        g.fillText(String(Math.round((yMax * (2 - i)) / 2)), pad - 3, y);
+      }
+      g.textAlign = 'center'; g.textBaseline = 'top';
+      for (let i = 0; i <= 3; i++) g.fillText(`${Math.round(((tMax * i) / 3) / 60)}m`, pad + (W * i) / 3, H + 6);
+      ps.forEach((p, i) => {
+        g.strokeStyle = p.color; g.lineWidth = 2; g.lineJoin = 'round';
+        g.beginPath();
+        this.history.forEach((h, n) => {
+          const x = pad + (h.t / tMax) * W, y = 3 + H - (h[key][i] / yMax) * H;
+          if (n) g.lineTo(x, y); else g.moveTo(x, y);
+        });
+        g.stroke();
+      });
+    }
+  }
+
+  // Is this resource at its gather limit right now?
+  isCapped(k) {
+    const w = this.world;
+    if (!w.gathered || !w.gathered[this.me]) return false;
+    return w.gathered[this.me][k] >= w.capOf(this.me, k) - 0.01;
   }
 
   // ---------- HUD ----------
@@ -923,7 +1192,16 @@ export class GameUI {
     const rates = w.rates ? w.rates[me] : {};
     $('res').innerHTML = RES.map((k) => {
       if (k === 'oil' && pl.age < 3 && pl.res.oil < 1) return '';
-      return `<span class="r" title="${k}">${RES_ICON[k]} ${fmt(pl.res[k])} <span class="rate">+${(rates[k] || 0).toFixed(1)}/s</span></span>`;
+      const cap = w.capOf(me, k), capped = this.isCapped(k);
+      if (capped && pl.alive) {
+        const now = performance.now();
+        if (now - (this.capSeen[k] || -1e9) > 90000) {
+          this.capSeen[k] = now;
+          this.alert(`⚠️ ${k[0].toUpperCase() + k.slice(1)} is at its gather limit (${+cap.toFixed(1)}/s). More workers won't help. Research Commerce or build a Market.`, 'info');
+        }
+      }
+      const got = (w.gathered && w.gathered[me] && w.gathered[me][k]) || 0;
+      return `<span class="r" title="${k}: +${(rates[k] || 0).toFixed(1)} per second in total. Workers gather ${got.toFixed(1)} of a limit of ${cap.toFixed(1)} per second; anything over the limit is lost. Commerce techs and Markets raise the limit.">${RES_ICON[k]} ${fmt(pl.res[k])} <span class="rate ${capped ? 'capped' : ''}">${capped ? '⚠' : '+'}${(rates[k] || 0).toFixed(1)}/s</span><span class="capbar ${capped ? 'capped' : ''}"><i style="width:${Math.min(100, (100 * got) / cap).toFixed(0)}%"></i></span></span>`;
     }).join('') + `<span class="r" title="Population / cap">👥 <span class="${w.pop(me) >= w.popCap(me) ? 'low' : ''}">${w.pop(me)}/${w.popCap(me)}</span></span>`;
     $('age-label').textContent = `${AGES[pl.age]} Age`;
     const lim = w.settings.doomsday | 0;
@@ -971,7 +1249,7 @@ export class GameUI {
     const box = $('sel-info');
     if (!ents.length) {
       const nat = nationOf(this.pl);
-      box.innerHTML = `<h3>${flagImg(this.pl.nation, 16)} ${esc(this.pl.name)} <span class="natname">of ${esc(nat.name)}</span></h3><div class="stats">${AGES[this.pl.age]} Age · Cities ${w.cityCount(this.me)}/${cityLimit(this.pl)} · <span title="${esc(nat.power.map(([t, d]) => `${t}: ${d}`).join('\n'))}">${nat.power.map(([t]) => esc(t)).join(' · ')}</span><br>Select units or buildings. Right-click to give orders.<br>Press <b>.</b> to find idle citizens, <b>H</b> for home.</div>`;
+      box.innerHTML = `<h3>${flagImg(this.pl.nation, 16)} ${esc(this.pl.name)} <span class="natname">of ${esc(nat.name)}</span></h3><div class="stats">${AGES[this.pl.age]} Age · Cities ${w.cityCount(this.me)}/${cityLimit(this.pl)} · <span title="${esc(nat.power.map(([t, d]) => `${t}: ${d}`).join('\n'))}">${nat.power.map(([t]) => esc(t)).join(' · ')}</span></div><div class="coach">${this.coachHtml()}</div><div class="stats">Select units or buildings. Right-click to give orders. <b>.</b> finds idle citizens, <b>H</b> goes home, <b>Z</b> marks a spot for allies.</div>`;
       return;
     }
     if (ents.length === 1) {
@@ -1004,9 +1282,12 @@ export class GameUI {
           const n = (w.workerCount && w.workerCount.get(e.id)) || 0;
           const per = GATHER_RATE[d.gather] * gatherMult(owner, d.gather) * w.lvlMul(e);
           extra += `<div class="stats">Workers ${n}/${w.slots(e)} · ${RES_ICON[d.gather]} ${(per * 60).toFixed(0)} ${d.gather} per worker per minute</div>`;
-          extra += `<div class="stats">Level ${e.lvl || 0}${e.lvl ? ` (+${Math.round(UPGRADE.rate * 100 * e.lvl)}% speed, +${UPGRADE.slots * e.lvl} workers)` : ''}${(e.lvl || 0) < AGES.length - 1 ? ` · ${(e.lvl || 0) < owner.age ? 'can be upgraded now' : `next upgrade in the ${AGES[(e.lvl || 0) + 1]} Age`}` : ' · fully upgraded'}</div>`;
+          extra += `<div class="stats">Level ${e.lvl || 0}${e.lvl ? ` (+${Math.round(UPGRADE.rate * 100 * e.lvl)}% speed, +${UPGRADE.slots * e.lvl} workers)` : ''}${(e.lvl || 0) < AGES.length - 1 ? ` · ${(e.lvl || 0) >= owner.age ? `next upgrade in the ${AGES[(e.lvl || 0) + 1]} Age` : (e.lvl || 0) >= commerceLevel(owner) ? `next upgrade needs ${TECHS[`com${(e.lvl || 0) + 1}`].name}` : 'can be upgraded now'}` : ' · fully upgraded'}</div>`;
         }
         if (e.type === 'city') extra += `<div class="stats">Territory radius ${8 + owner.age} · Pop +${d.pop}</div>`;
+        if (d.wonder) extra += `<div class="stats uniq">${esc(d.desc)}</div>`;
+        if (e.type === 'rocket' && e.done) extra += `<div class="stats"><b>Launches in ${Math.max(0, Math.ceil((e.launchAt - this.s.tick) * DT))}s</b></div>`;
+        if (e.type === 'market' && e.done) extra += `<div class="stats">Every Market you own raises all gather limits by ${Math.round(MARKET.capBonus * 100)}%. Price: ${MARKET.trade} buys ${Math.floor(MARKET.trade * tradeRate(owner))}.</div>`;
         if (e.type === 'silo') extra += `<div class="stats">Nukes ready: ${e.stock}/${NUKE.maxStock}</div>`;
         if (e.owner === this.me && e.q.length) {
           extra += '<div class="queue">' + e.q.map((it, i) => {
@@ -1041,6 +1322,29 @@ export class GameUI {
     box.innerHTML = html + '</div>';
   }
 
+  // One tip for what to do next.
+  coachHtml() {
+    const w = this.world, pl = this.pl, me = this.me;
+    if (!pl.alive) return '';
+    const idle = this.s.units.filter((u) => u.owner === me && u.type === 'citizen' && !u.ord).length;
+    if (idle) return `💤 ${idle} idle citizen${idle > 1 ? 's' : ''}. Press <b>.</b> and put ${idle > 1 ? 'them' : 'it'} to work.`;
+    if (w.pop(me) >= w.popCap(me)) return '👥 Population is full. Build a city or research Civics at a Library.';
+    const capped = RES.find((k) => this.isCapped(k));
+    if (capped) return `⚠️ ${capped[0].toUpperCase() + capped.slice(1)} is at its limit. Research Commerce at a Library or build a Market (K).`;
+    const mine = this.s.blds.filter((b) => b.owner === me && b.done);
+    if (!mine.some((b) => b.type === 'library')) return `📚 Build a Library (Y). You need Science from it to reach the next age.`;
+    if (pl.age < AGES.length - 1) {
+      const up = AGE_UP[pl.age];
+      if (up.needs && !pl.techs[up.needs] && !pl.pending[up.needs]) return `📜 Research ${TECHS[up.needs].name} at a Library. The ${AGES[pl.age + 1]} Age needs it.`;
+      if (!pl.pending.age && up.needs && pl.techs[up.needs] && w.canAfford(me, up.cost)) return `⏫ You can advance to the ${AGES[pl.age + 1]} Age. Select a city and press U.`;
+    }
+    const com = commerceLevel(pl);
+    if (com < pl.age && !pl.pending[`com${com + 1}`] && TECHS[`com${com + 1}`]) return `💰 ${TECHS[`com${com + 1}`].name} raises your gather limits and lets you upgrade buildings.`;
+    if (!mine.some((b) => BLDS[b.type].trains && b.type !== 'city')) return '⚔️ Build a Barracks (B) so you can defend yourself.';
+    if (this.world.settings.wonders !== false && pl.age >= 1 && !(pl.st && pl.st.wonders)) return '🏛️ Wonders give big bonuses. Select a citizen and press J.';
+    return '🚩 Build an army and take a city from someone.';
+  }
+
   // Build the list of buttons for the command card.
   cardList() {
     const w = this.world, pl = this.pl, me = this.me;
@@ -1051,6 +1355,23 @@ export class GameUI {
     const blds = mine.filter((e) => e.kind === 'b');
     if (units.length) {
       const cits = units.filter((u) => u.type === 'citizen');
+      if (cits.length && this.cardPage === 'wonders' && w.settings.wonders !== false) {
+        for (const type of WONDERS) {
+          const d = BLDS[type];
+          const taken = this.s.blds.find((b) => b.type === type);
+          let need = '';
+          if (taken) need = `${taken.owner === me ? 'You are' : `${this.s.players[taken.owner].name} is`} already ${taken.done ? 'the owner' : 'building it'}`;
+          else if (pl.age < d.age) need = `Needs the ${AGES[d.age]} Age`;
+          else if (d.needTech && !pl.techs[d.needTech]) need = `Needs ${TECHS[d.needTech].name}`;
+          list.push({
+            icon: d.icon, label: d.names[0], cost: d.cost, need, desc: `<b>Only one in the whole game.</b> ${d.desc}`,
+            active: this.mode && this.mode.k === 'place' && this.mode.type === type,
+            fn: () => { this.mode = { k: 'place', type }; this.cardPage = null; },
+          });
+        }
+        list.push({ key: 'J', icon: '↩️', label: 'Back', desc: 'Back to normal buildings.', fn: () => { this.cardPage = null; } });
+        return list;
+      }
       if (cits.length) {
         for (const type of BUILD_ORDER) {
           const d = BLDS[type];
@@ -1066,6 +1387,9 @@ export class GameUI {
             fn: () => { this.mode = { k: 'place', type }; },
           });
         }
+      }
+      if (cits.length && w.settings.wonders !== false) {
+        list.push({ key: 'J', icon: '🏛️', label: 'Wonders', desc: 'Huge buildings with huge bonuses. There is only one of each in the whole game, so build it before someone else does.', fn: () => { this.cardPage = 'wonders'; } });
       }
       const mil = units.filter((u) => u.type !== 'citizen');
       if (mil.length || !cits.length) {
@@ -1098,25 +1422,33 @@ export class GameUI {
     if (type === 'city' && pl.age < AGES.length - 1) {
       const up = AGE_UP[pl.age];
       list.push({
-        key: 'U', icon: '⏫', label: `${AGES[pl.age + 1]} Age`, cost: up.cost, need: pl.pending.age ? 'Already researching' : '',
+        key: 'U', icon: '⏫', label: `${AGES[pl.age + 1]} Age`, cost: up.cost, need: pl.pending.age ? 'Already researching' : up.needs && !pl.techs[up.needs] ? `Research ${TECHS[up.needs].name} at a Library first` : '',
         desc: `Advance to the ${AGES[pl.age + 1]} Age. Units upgrade automatically, new buildings and techs unlock, and your borders grow. Takes ${up.time}s.`,
         fn: () => this.send({ c: 'research', b: pick().id, tech: 'age' }),
       });
     }
     if (d.research) {
       // National tech first. For chains (Agriculture -> Irrigation -> Fertiliser) only show the next step.
-      const order = TECH_ORDER.filter((tk) => TECHS[tk].nation).concat(TECH_ORDER.filter((tk) => !TECHS[tk].nation));
-      for (const tk of order) {
+      // Then Science and Commerce, which everything else leans on. What you can't research yet goes last.
+      const rank = (t) => (t.nation ? 0 : t.line === 'sci' ? 1 : t.line === 'com' ? 2 : 3);
+      const techs = [];
+      for (const tk of TECH_ORDER) {
         const t = TECHS[tk];
         if (pl.techs[tk] || !forNation(pl, t)) continue;
         if (t.age > pl.age + 1) continue;
-        if (t.req && !pl.techs[t.req] && !pl.pending[t.req]) continue;
+        const reqs = techReqs(t);
+        if (reqs[0] && !pl.techs[reqs[0]] && !pl.pending[reqs[0]]) continue; // the chain's parent comes first
+        const missing = reqs.filter((r) => !pl.techs[r]);
         let need = '';
         if (pl.pending[tk]) need = 'Researching…';
         else if (pl.age < t.age) need = `Needs the ${AGES[t.age]} Age`;
-        else if (t.req && !pl.techs[t.req]) need = `Needs ${TECHS[t.req].name}`;
+        else if (missing.length) need = `Needs ${missing.map((r) => TECHS[r].name).join(' and ')}`;
+        techs.push({ tk, t, need });
+      }
+      techs.sort((a, b) => (a.need ? 10 : 0) + rank(a.t) - (b.need ? 10 : 0) - rank(b.t));
+      for (const { tk, t, need } of techs) {
         list.push({
-          icon: tk === 'manhattan' ? '☢️' : tk === 'sdi' ? '🛡️' : t.nation ? '⭐' : '📜', label: t.name, cost: techCost(pl, tk), need,
+          icon: tk === 'manhattan' ? '☢️' : tk === 'sdi' ? '🛡️' : t.nation ? '⭐' : t.line === 'sci' ? '🔬' : t.line === 'com' ? '💰' : '📜', label: t.name, cost: techCost(pl, tk), need,
           desc: `${t.nation ? `<b>${NATIONS[t.nation].name} national tech.</b> ` : ''}${t.desc} Takes ${+techTime(pl, tk).toFixed(1)}s.`, fn: () => this.send({ c: 'research', b: pick().id, tech: tk }),
         });
       }
@@ -1136,6 +1468,35 @@ export class GameUI {
         fn: () => { const r = done.find((x) => x.stock > 0); if (r) this.mode = { k: 'target', what: 'nuke', b: r.id }; },
       });
     }
+    if (type === 'market') {
+      const rate = Math.floor(MARKET.trade * tradeRate(pl));
+      const keys = { food: 'F', wood: 'D', metal: 'E', oil: 'G' };
+      for (const to of RES) {
+        if (to === 'oil' && pl.age < 3) continue;
+        // Pays with whatever you have the most of.
+        const from = RES.filter((k) => k !== to).sort((a, b) => pl.res[b] - pl.res[a])[0];
+        list.push({
+          key: keys[to], icon: RES_ICON[to], label: `Buy ${rate} ${to}`, cost: { [from]: MARKET.trade },
+          need: pl.res[from] < MARKET.trade ? `You need ${MARKET.trade} of another resource` : '',
+          desc: `Pay ${MARKET.trade} of your most plentiful resource and get ${rate} ${to}. Commerce techs give better prices. Shift = 5 times.`,
+          fn: (shift) => {
+            for (let i = 0; i < (shift ? 5 : 1); i++) {
+              const f = RES.filter((k) => k !== to).sort((a, b) => this.pl.res[b] - this.pl.res[a])[0];
+              this.send({ c: 'trade', from: f, to });
+            }
+          },
+        });
+      }
+    }
+    if (type === 'laser') {
+      const b = done[0], left = Math.max(0, Math.ceil(((b.ready || 0) - this.s.tick) * DT));
+      list.push({
+        key: 'L', icon: '🛰️', label: 'Fire laser', need: left ? `Recharging: ${left}s` : '', count: left,
+        desc: `Burns enemies in a ${LASER.radius} tile circle, ${LASER.delay}s after you click. Units there lose ${Math.round(LASER.unitDmg * 100)}% of their health and buildings ${Math.round(LASER.bldDmg * 100)}%. Your side is safe. Fires every ${LASER.every}s. Everyone can see the warning circle.`,
+        active: this.mode && this.mode.what === 'laser',
+        fn: () => { this.mode = { k: 'target', what: 'laser', b: b.id }; },
+      });
+    }
     if (UPGRADE[type]) {
       // Upgrade the least upgraded one first.
       const cands = () => done.filter((b) => !b.q.some((it) => it.k === 'upg')).sort((a, b) => (a.lvl || 0) - (b.lvl || 0) || a.id - b.id);
@@ -1145,6 +1506,7 @@ export class GameUI {
       if (lvl >= up.names.length) need = 'Fully upgraded';
       else if (!cand.length) need = 'Already upgrading';
       else if (lvl > pl.age) need = `Next upgrade in the ${AGES[lvl]} Age`;
+      else if (lvl > commerceLevel(pl)) need = `Needs ${TECHS[`com${lvl}`].name} at a Library`;
       const name = up.names[Math.min(lvl, up.names.length - 1)];
       list.push({
         key: 'U', icon: '⬆️', label: `Upgrade: ${name}`, cost: lvl < up.names.length ? upgradeCost(type, lvl) : null, need,

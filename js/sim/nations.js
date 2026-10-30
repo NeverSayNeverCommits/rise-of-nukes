@@ -21,8 +21,9 @@ export const NATIONS = {
     power: [
       ['Deutsche Qualität', 'Buildings have +30% health.'],
       ['Pünktlichkeit', 'Units train 20% faster. Always on time.'],
+      ['Ruhrgebiet', 'Mines make 15% more metal.'],
     ],
-    bonus: { bldHp: 0.3, trainTime: 0.2 },
+    bonus: { bldHp: 0.3, trainTime: 0.2, gather: { metal: 0.15 } },
     unique: ['Landsknecht (Gunpowder infantry): a huge two-handed sword that hits everyone nearby.', 'Leopard tanks (Industrial and Atomic): tougher and faster.'],
     signature: 'oompah', tech: 'autobahn',
     cities: ['Berlin', 'Hamburg', 'München', 'Köln', 'Frankfurt', 'Stuttgart', 'Bielefeld (allegedly)', 'Düsseldorf', 'Wanne-Eickel', 'Castrop-Rauxel'],
@@ -32,11 +33,11 @@ export const NATIONS = {
   taiwan: {
     name: 'Taiwan', short: 'TWN', motto: 'Small island. Very big chips.',
     power: [
-      ['Semiconductors', 'Library techs cost 25% less and finish 30% faster.'],
-      ['Night Markets', 'Cities make twice as much free food and wood.'],
+      ['Semiconductors', 'Library techs cost 15% less and finish 25% faster.'],
+      ['Night Markets', 'Cities make 50% more free food and wood.'],
     ],
-    bonus: { techCost: 0.25, techTime: 0.3, cityIncome: 2 },
-    unique: ['Bubble Tea Gunners (Industrial and Atomic ranged): fire tapioca pearls 33% faster.'],
+    bonus: { techCost: 0.15, techTime: 0.25, cityIncome: 1.5 },
+    unique: ['Bubble Tea Gunners (Industrial and Atomic ranged): fire tapioca pearls 18% faster.'],
     signature: 'scooter', tech: 'seven11',
     cities: ['Taipei', 'Kaohsiung', 'Taichung', 'Tainan', 'Hsinchu', 'Keelung', 'Hualien', 'Jiufen', 'Taitung', 'Chiayi'],
     first: ['Wei', 'Mei-Ling', 'Chia-Hao', 'Yu-Ting', 'Kevin', 'Vivian', 'A-Hui', 'Jerry', 'Tina', 'Ming', 'Jason', 'Pei-Shan', 'Cherry', 'A-Bing'],
@@ -48,8 +49,9 @@ export const NATIONS = {
       ['Bayanihan', 'Citizens build 50% faster. The neighbours help.'],
       ['Big Families', '+10 population per city.'],
       ['Lechon Masters', 'Cows give double food.'],
+      ['Rice Terraces', 'Farms make 10% more food, camps 15% more wood.'],
     ],
-    bonus: { buildSpeed: 0.5, popPerCity: 10, cowFood: 2 },
+    bonus: { buildSpeed: 0.5, popPerCity: 10, cowFood: 2, gather: { food: 0.1, wood: 0.15 } },
     unique: ['Mactan Warriors (Ancient and Classical infantry): +30% attack, +10% speed. Ask Magellan.'],
     signature: 'jeepney', tech: 'karaoke',
     cities: ['Manila', 'Cebu', 'Davao', 'Quezon City', 'Iloilo', 'Baguio', 'Vigan', 'Boracay', 'Bacolod', 'Zamboanga'],
@@ -86,8 +88,8 @@ export const NATION_UNIQUE = {
   },
   taiwan: {
     ranged: {
-      3: { name: 'Bubble Tea Gunner', mul: { cd: 0.75, hp: 1.1 }, desc: 'Taiwanese unique. Fires tapioca pearls. Very fast. Half sugar, full auto.' },
-      4: { name: 'Tapioca Minigun Team', mul: { cd: 0.75, hp: 1.1 }, desc: 'Taiwanese unique. Extra pearls. Less ice. More bullets.' },
+      3: { name: 'Bubble Tea Gunner', mul: { cd: 0.85 }, desc: 'Taiwanese unique. Fires tapioca pearls. Very fast. Half sugar, full auto.' },
+      4: { name: 'Tapioca Minigun Team', mul: { cd: 0.85 }, desc: 'Taiwanese unique. Extra pearls. Less ice. More bullets.' },
     },
   },
   philippines: {
@@ -136,7 +138,7 @@ export const NATION_UNITS = {
   bowler: {
     nation: 'pakistan', cls: 'rng', from: 'barracks', key: 'B', age: 0, icon: '🏏',
     names: ['Fast Bowler', 'Fast Bowler', 'Fast Bowler', 'Swing Bowler', 'Express Bowler'],
-    hp: [40, 50, 60, 75, 90], atk: [12, 15, 20, 26, 34], range: [6.5, 6.5, 7, 7.5, 8],
+    hp: [40, 50, 60, 75, 90], atk: [10, 13, 17, 22, 29], range: [6.5, 6.5, 7, 7.5, 8],
     cd: [2.6, 2.6, 2.6, 2.4, 2.2], speed: [2.2, 2.2, 2.2, 2.3, 2.4], sight: 9, radius: 0.28,
     cost: [{ food: 40, wood: 55 }, { food: 45, wood: 60 }, { food: 50, wood: 40, metal: 25 }, { food: 60, metal: 55 }, { food: 70, metal: 65, oil: 10 }],
     time: [13, 13, 14, 14, 15],

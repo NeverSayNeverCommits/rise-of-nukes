@@ -9,16 +9,22 @@ export const RES_ICON = { food: '🌾', wood: '🪵', metal: '⛏️', oil: '�
 export const AGES = ['Ancient', 'Classical', 'Gunpowder', 'Industrial', 'Atomic'];
 
 // Cost and time to reach the NEXT age (index = current age).
+// needs: the Science tech you must research at a Library first.
 export const AGE_UP = [
-  { cost: { food: 300, wood: 200 }, time: 30 },
-  { cost: { food: 600, wood: 400, metal: 200 }, time: 40 },
-  { cost: { food: 1000, wood: 600, metal: 600 }, time: 50 },
-  { cost: { food: 1600, metal: 1200, oil: 600 }, time: 60 },
+  { cost: { food: 300, wood: 200 }, time: 30, needs: 'sci1' },
+  { cost: { food: 600, wood: 400, metal: 200 }, time: 40, needs: 'sci2' },
+  { cost: { food: 900, wood: 500, metal: 500 }, time: 50, needs: 'sci3' },
+  { cost: { food: 1200, metal: 800, oil: 300 }, time: 60, needs: 'sci4' },
 ];
 
 // Gather rate per working citizen.
 export const GATHER_RATE = { food: 0.55, wood: 0.5, metal: 0.4, oil: 0.35 };
 export const CITY_INCOME = { food: 0.5, wood: 0.3 };
+// Gather limit: the most of each resource your workers can bring in per second, like the
+// commerce cap in Rise of Nations. Commerce techs, Markets and the Golden Cow raise it.
+// Free income (cities, cows, crates) doesn't count towards it.
+export const GATHER_CAP = { food: 14, wood: 12, metal: 8, oil: 6 };
+export const MARKET = { capBonus: 0.1, trade: 100, rate: 0.6, ratePerCommerce: 0.05 };
 export const BUILD_RATE = 1;      // build-seconds per citizen per second
 export const POP_MAX = 200;
 export const CITY_MIN_DIST = 12;  // between city centres
@@ -66,7 +72,7 @@ export const UNITS = {
   ranged: {
     cls: 'rng', from: 'barracks', key: 'R', age: 0, icon: '🏹',
     names: ['Archer', 'Crossbowman', 'Sharpshooter', 'Machine Gunner', 'Heavy MG Team'],
-    hp: [45, 55, 70, 85, 100], atk: [6, 8, 11, 14, 18], range: [5, 5, 5.5, 5.5, 6],
+    hp: [50, 55, 75, 85, 100], atk: [7, 8, 13, 14, 18], range: [5, 5, 5.5, 5.5, 6],
     cd: [1.5, 1.5, 1.6, 1.0, 0.8], speed: [2.0, 2.0, 2.0, 2.1, 2.2], sight: 8, radius: 0.28,
     cost: [{ food: 30, wood: 40 }, { food: 35, wood: 45 }, { food: 40, wood: 30, metal: 20 },
            { food: 50, metal: 40 }, { food: 60, metal: 50, oil: 10 }],
@@ -182,18 +188,57 @@ export const BLDS = {
     names: ['Airfield', 'Airfield', 'Airfield', 'Airfield', 'Air Base'], trains: ['fighter', 'bomber'],
     desc: 'Builds fighters and bombers. Bombers come back here to reload.',
   },
+  market: {
+    size: 2, hp: 800, cost: { wood: 150, food: 50 }, time: 25, key: 'K', icon: '🏪', age: 1, sight: 4,
+    names: ['Market', 'Market', 'Bank', 'Stock Exchange', 'Stock Exchange'], market: true,
+    desc: 'Trade one resource for another. Each Market (up to one per city) also raises your gather limit by 10%.',
+  },
   silo: {
     size: 2, hp: 1500, cost: { metal: 600, oil: 400 }, time: 45, key: 'N', icon: '☢️', age: 4, sight: 4,
     names: ['Missile Silo', 'Missile Silo', 'Missile Silo', 'Missile Silo', 'Missile Silo'],
     needTech: 'manhattan', nukes: true,
     desc: 'Builds and launches nuclear missiles. Needs the Manhattan Project.',
   },
+  // ----- Wonders: only one of each can exist in the whole game. Whoever finishes it first has it. -----
+  pyramids: {
+    size: 4, hp: 3000, cost: { food: 500, wood: 500 }, time: 90, icon: '🔺', age: 1, sight: 8, wonder: true,
+    names: Array(5).fill('Great Pyramid'), desc: '+10 population per city. Nobody remembers who actually built it.',
+  },
+  colosseum: {
+    size: 4, hp: 3000, cost: { food: 500, wood: 400, metal: 300 }, time: 100, icon: '🏟️', age: 1, sight: 8, wonder: true,
+    names: Array(5).fill('Colosseum'), desc: 'Soldiers train 20% faster and start as veterans (★).',
+  },
+  terracotta: {
+    size: 4, hp: 3500, cost: { food: 600, wood: 300, metal: 500 }, time: 110, icon: '🗿', age: 2, sight: 8, wonder: true,
+    names: Array(5).fill('Terracotta Army'), desc: 'A free soldier marches out every 30 seconds, for as long as you have room.',
+  },
+  goldencow: {
+    size: 4, hp: 3500, cost: { food: 800, wood: 400, metal: 800 }, time: 120, icon: '🐮', age: 2, sight: 8, wonder: true,
+    names: Array(5).fill('Golden Cow'), desc: 'Gather limit +25%, and +2 of every resource per second. All hail the cow.',
+  },
+  radio: {
+    size: 4, hp: 4000, cost: { food: 600, wood: 600, metal: 1000 }, time: 120, icon: '📡', age: 3, sight: 12, wonder: true,
+    names: Array(5).fill('Great Radio Tower'), desc: 'You and your allies can see the whole map, all the time.',
+  },
+  laser: {
+    size: 4, hp: 4500, cost: { metal: 2500, oil: 2000 }, time: 150, key: 'L', icon: '🛰️', age: 4, sight: 8, wonder: true,
+    needTech: 'sci4', names: Array(5).fill('Orbital Laser'), desc: 'Fire a huge laser from space anywhere on the map, every 90 seconds. Does not move the Doomsday Clock.',
+  },
+  rocket: {
+    size: 4, hp: 6000, cost: { food: 3000, wood: 2000, metal: 4000, oil: 4000 }, time: 180, icon: '🚀', age: 4, sight: 8, wonder: true,
+    needTech: 'com5', names: Array(5).fill('Moon Rocket'), desc: 'WIN THE GAME. When it is built, a 4 minute countdown starts and everyone is told. If the rocket survives, your team wins.',
+  },
 };
+export const WONDERS = ['pyramids', 'colosseum', 'terracotta', 'goldencow', 'radio', 'laser', 'rocket'];
+export const TERRACOTTA = { every: 30 };
+export const LASER = { every: 90, charge: 45, delay: 2.5, radius: 4, unitDmg: 0.85, bldDmg: 0.4 };
+export const ROCKET = { countdown: 240 };
 
-export const BUILD_ORDER = ['city', 'farm', 'lumber', 'mine', 'oilwell', 'barracks', 'stable', 'workshop', 'library', 'tower', 'airfield', 'silo'];
+export const BUILD_ORDER = ['city', 'farm', 'lumber', 'mine', 'oilwell', 'barracks', 'stable', 'workshop', 'library', 'market', 'tower', 'airfield', 'silo'];
 
 // Gather buildings can be upgraded once per age (up to level 4 in the Atomic Age).
 // Each level: +1 worker slot and +20% gathering per worker. Cost = cost x new level.
+// Level N also needs Commerce level N (Barter for level 1, Coinage for level 2, and so on).
 export const UPGRADE = {
   rate: 0.2, slots: 1,
   farm: { cost: { wood: 80, food: 40 }, names: ['Farm', 'Irrigated Farm', 'Plantation', 'Mechanised Farm', 'Agribusiness'] },
@@ -223,27 +268,38 @@ export const NUKE = {
 // Technologies researched at the Library.
 // eff: gather = { res: bonus }, hp/atk = bonus to military, popPerCity, cityLimit, attrition, speed
 export const TECHS = {
+  // Science: you need these to advance to the next age. Each also makes research 8% faster.
+  sci1: { name: 'Writing', age: 0, cost: { food: 60, wood: 60 }, time: 20, eff: { research: 0.08 }, line: 'sci', desc: 'Needed for the Classical Age. Research is 8% faster.' },
+  sci2: { name: 'Mathematics', age: 1, req: 'sci1', cost: { food: 150, wood: 120 }, time: 25, eff: { research: 0.08 }, line: 'sci', desc: 'Needed for the Gunpowder Age. Research is 8% faster.' },
+  sci3: { name: 'Scientific Method', age: 2, req: 'sci2', cost: { food: 300, metal: 200 }, time: 30, eff: { research: 0.08 }, line: 'sci', desc: 'Needed for the Industrial Age. Research is 8% faster.' },
+  sci4: { name: 'Computers', age: 3, req: 'sci3', cost: { food: 500, metal: 400, oil: 100 }, time: 35, eff: { research: 0.08 }, line: 'sci', desc: 'Needed for the Atomic Age. Research is 8% faster.' },
+  // Commerce: raises the gather limit of every resource, and unlocks the next building upgrade.
+  com1: { name: 'Barter', age: 0, cost: { food: 80, wood: 80 }, time: 20, eff: { cap: 0.5 }, line: 'com', desc: 'Gather limit +50%. Unlocks level 1 building upgrades.' },
+  com2: { name: 'Coinage', age: 1, req: 'com1', cost: { food: 150, wood: 150 }, time: 25, eff: { cap: 0.5 }, line: 'com', desc: 'Gather limit up further. Unlocks level 2 building upgrades. Better Market prices.' },
+  com3: { name: 'Banking', age: 2, req: ['com2', 'sci2'], cost: { food: 300, wood: 200, metal: 200 }, time: 30, eff: { cap: 0.75 }, line: 'com', desc: 'Gather limit up further. Unlocks level 3 building upgrades. Better Market prices.' },
+  com4: { name: 'Stock Market', age: 3, req: ['com3', 'sci3'], cost: { food: 500, metal: 400, oil: 100 }, time: 35, eff: { cap: 1 }, line: 'com', desc: 'Gather limit up further. Unlocks level 4 building upgrades. Better Market prices.' },
+  com5: { name: 'Globalisation', age: 4, req: ['com4', 'sci4'], cost: { food: 800, metal: 800, oil: 400 }, time: 40, eff: { cap: 1.25 }, line: 'com', desc: 'A huge rise in the gather limit. Needed for the Moon Rocket.' },
   agri1: { name: 'Agriculture', age: 0, cost: { food: 100, wood: 100 }, time: 25, eff: { gather: { food: 0.2 } }, desc: '+20% food.' },
   wood1: { name: 'Forestry', age: 0, cost: { food: 100, wood: 80 }, time: 25, eff: { gather: { wood: 0.2 } }, desc: '+20% wood.' },
-  metal1: { name: 'Mining', age: 1, cost: { food: 150, wood: 150 }, time: 30, eff: { gather: { metal: 0.2 } }, desc: '+20% metal.' },
-  civics: { name: 'Civics', age: 1, cost: { food: 200, wood: 200 }, time: 35, eff: { popPerCity: 15, cityLimit: 1 }, desc: '+15 population per city and +1 city limit.' },
-  weap1: { name: 'Weaponsmithing', age: 1, cost: { food: 150, metal: 150 }, time: 35, eff: { atk: 0.15 }, desc: '+15% attack for military units.' },
-  armor1: { name: 'Armor', age: 1, cost: { food: 150, metal: 150 }, time: 35, eff: { hp: 0.15 }, desc: '+15% hit points for military units.' },
-  agri2: { name: 'Irrigation', age: 2, req: 'agri1', cost: { food: 300, wood: 300 }, time: 35, eff: { gather: { food: 0.2 } }, desc: '+20% more food.' },
-  wood2: { name: 'Sawmills', age: 2, req: 'wood1', cost: { food: 300, metal: 150 }, time: 35, eff: { gather: { wood: 0.2 } }, desc: '+20% more wood.' },
-  logistics: { name: 'Logistics', age: 2, cost: { food: 300, metal: 300 }, time: 40, eff: { attrition: 0.5, speed: 0.1 }, desc: 'Half damage from enemy territory. +10% unit speed.' },
-  metal2: { name: 'Deep Mining', age: 3, req: 'metal1', cost: { food: 400, wood: 400 }, time: 40, eff: { gather: { metal: 0.25 } }, desc: '+25% more metal.' },
-  agri3: { name: 'Fertiliser', age: 3, req: 'agri2', cost: { food: 500, wood: 300, metal: 200 }, time: 40, eff: { gather: { food: 0.25 } }, desc: '+25% more food.' },
-  wood3: { name: 'Chainsaws', age: 3, req: 'wood2', cost: { food: 500, metal: 300 }, time: 40, eff: { gather: { wood: 0.25 } }, desc: '+25% more wood.' },
-  oil1: { name: 'Refining', age: 3, cost: { food: 400, metal: 300 }, time: 40, eff: { gather: { oil: 0.25 } }, desc: '+25% oil.' },
-  weap2: { name: 'Ballistics', age: 3, req: 'weap1', cost: { food: 400, metal: 400 }, time: 45, eff: { atk: 0.15 }, desc: '+15% more attack.' },
-  armor2: { name: 'Composite Armor', age: 3, req: 'armor1', cost: { food: 400, metal: 400 }, time: 45, eff: { hp: 0.15 }, desc: '+15% more hit points.' },
-  civics2: { name: 'Nationalism', age: 3, req: 'civics', cost: { food: 600, wood: 400, metal: 400 }, time: 45, eff: { popPerCity: 15, cityLimit: 1 }, desc: '+15 population per city and +1 city limit.' },
-  oil2: { name: 'Cracking Towers', age: 3, req: 'oil1', cost: { food: 500, wood: 500, metal: 300 }, time: 45, eff: { gather: { oil: 0.25 } }, desc: '+25% more oil.' },
-  metal3: { name: 'Strip Mining', age: 4, req: 'metal2', cost: { food: 800, wood: 800 }, time: 45, eff: { gather: { metal: 0.3 } }, desc: '+30% more metal.' },
-  oil3: { name: 'Fracking', age: 4, req: 'oil2', cost: { food: 800, wood: 600, metal: 400 }, time: 45, eff: { gather: { oil: 0.3 } }, desc: '+30% more oil. Nobody asks where it comes from.' },
-  manhattan: { name: 'Manhattan Project', age: 4, cost: { food: 1000, metal: 1500, oil: 1000 }, time: 60, eff: {}, desc: 'Unlocks the Missile Silo. Everyone will be told.' },
-  sdi: { name: 'Missile Defense', age: 4, cost: { metal: 1200, oil: 1200 }, time: 50, eff: {}, desc: '50% chance to shoot down nukes aimed at your territory.' },
+  metal1: { name: 'Mining', age: 1, req: 'sci1', cost: { food: 150, wood: 150 }, time: 30, eff: { gather: { metal: 0.2 } }, desc: '+20% metal.' },
+  civics: { name: 'Civics', age: 1, req: 'sci1', cost: { food: 200, wood: 200 }, time: 35, eff: { popPerCity: 15, cityLimit: 1 }, desc: '+15 population per city and +1 city limit.' },
+  weap1: { name: 'Weaponsmithing', age: 1, req: 'sci1', cost: { food: 150, metal: 150 }, time: 35, eff: { atk: 0.15 }, desc: '+15% attack for military units.' },
+  armor1: { name: 'Armor', age: 1, req: 'sci1', cost: { food: 150, metal: 150 }, time: 35, eff: { hp: 0.15 }, desc: '+15% hit points for military units.' },
+  agri2: { name: 'Irrigation', age: 2, req: ['agri1', 'com1'], cost: { food: 300, wood: 300 }, time: 35, eff: { gather: { food: 0.2 } }, desc: '+20% more food.' },
+  wood2: { name: 'Sawmills', age: 2, req: ['wood1', 'com1'], cost: { food: 300, metal: 150 }, time: 35, eff: { gather: { wood: 0.2 } }, desc: '+20% more wood.' },
+  logistics: { name: 'Logistics', age: 2, req: 'com2', cost: { food: 300, metal: 300 }, time: 40, eff: { attrition: 0.5, speed: 0.1 }, desc: 'Half damage from enemy territory. +10% unit speed.' },
+  metal2: { name: 'Deep Mining', age: 3, req: ['metal1', 'com2'], cost: { food: 400, wood: 400 }, time: 40, eff: { gather: { metal: 0.25 } }, desc: '+25% more metal.' },
+  agri3: { name: 'Fertiliser', age: 3, req: ['agri2', 'com3'], cost: { food: 500, wood: 300, metal: 200 }, time: 40, eff: { gather: { food: 0.25 } }, desc: '+25% more food.' },
+  wood3: { name: 'Chainsaws', age: 3, req: ['wood2', 'com3'], cost: { food: 500, metal: 300 }, time: 40, eff: { gather: { wood: 0.25 } }, desc: '+25% more wood.' },
+  oil1: { name: 'Refining', age: 3, req: 'sci3', cost: { food: 400, metal: 300 }, time: 40, eff: { gather: { oil: 0.25 } }, desc: '+25% oil.' },
+  weap2: { name: 'Ballistics', age: 3, req: ['weap1', 'sci3'], cost: { food: 400, metal: 400 }, time: 45, eff: { atk: 0.15 }, desc: '+15% more attack.' },
+  armor2: { name: 'Composite Armor', age: 3, req: ['armor1', 'sci3'], cost: { food: 400, metal: 400 }, time: 45, eff: { hp: 0.15 }, desc: '+15% more hit points.' },
+  civics2: { name: 'Nationalism', age: 3, req: ['civics', 'com3'], cost: { food: 600, wood: 400, metal: 400 }, time: 45, eff: { popPerCity: 15, cityLimit: 1 }, desc: '+15 population per city and +1 city limit.' },
+  oil2: { name: 'Cracking Towers', age: 3, req: ['oil1', 'com3'], cost: { food: 500, wood: 500, metal: 300 }, time: 45, eff: { gather: { oil: 0.25 } }, desc: '+25% more oil.' },
+  metal3: { name: 'Strip Mining', age: 4, req: ['metal2', 'com4'], cost: { food: 800, wood: 800 }, time: 45, eff: { gather: { metal: 0.3 } }, desc: '+30% more metal.' },
+  oil3: { name: 'Fracking', age: 4, req: ['oil2', 'com4'], cost: { food: 800, wood: 600, metal: 400 }, time: 45, eff: { gather: { oil: 0.3 } }, desc: '+30% more oil. Nobody asks where it comes from.' },
+  manhattan: { name: 'Manhattan Project', age: 4, req: ['sci4', 'oil1'], cost: { food: 1000, metal: 1500, oil: 1000 }, time: 60, eff: {}, desc: 'Unlocks the Missile Silo. Everyone will be told.' },
+  sdi: { name: 'Missile Defense', age: 4, req: 'sci4', cost: { metal: 1200, oil: 1200 }, time: 50, eff: {}, desc: '50% chance to shoot down nukes aimed at your territory.' },
 };
 
 Object.assign(UNITS, NATION_UNITS);
@@ -260,7 +316,19 @@ export function techCost(player, key) {
   for (const k in c) out[k] = Math.floor(c[k] * f);
   return out;
 }
-export function techTime(player, key) { return TECHS[key].time * (1 - nbonus(player, 'techTime')); }
+export function techTime(player, key) { return TECHS[key].time * (1 - nbonus(player, 'techTime')) * (1 - techSum(player, 'research')); }
+
+// The techs needed before this one can be researched (req can be one name or a list).
+export const techReqs = (t) => (!t.req ? [] : Array.isArray(t.req) ? t.req : [t.req]);
+export const techMissing = (player, t) => techReqs(t).filter((k) => !player.techs[k]);
+// Commerce level: how many Commerce techs this player has.
+export function commerceLevel(player) {
+  let n = 0;
+  for (let i = 1; i <= 5; i++) if (player.techs[`com${i}`]) n = i;
+  return n;
+}
+// Market price: 100 of one resource buys this share x 100 of another.
+export const tradeRate = (player) => MARKET.rate + MARKET.ratePerCommerce * commerceLevel(player);
 
 export const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ecf0f1'];
 
@@ -287,6 +355,11 @@ export function techSum(player, key) {
     if (player.techs[t] && TECHS[t].eff[key]) s += TECHS[t].eff[key];
   }
   return s;
+}
+
+// The most of this resource your workers can bring in per second.
+export function gatherCap(player, res, markets = 0) {
+  return GATHER_CAP[res] * (1 + techSum(player, 'cap') + MARKET.capBonus * markets + (player.w && player.w.goldencow ? 0.25 : 0));
 }
 
 export function gatherMult(player, res) {

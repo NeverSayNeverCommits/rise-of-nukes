@@ -5,6 +5,7 @@ import { PLAYER_COLORS } from './sim/data.js';
 import { sfx, say, audioSettings, setAudio } from './sfx.js';
 import { NATIONS, NATION_KEYS, NATION_UNITS, NATION_TECHS } from './sim/nations.js';
 import { flagImg } from './flags.js';
+import { BOT_LEVELS } from './bot.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -50,10 +51,21 @@ function uiCallbacks() {
       else { show('menu'); status('menu-status', 'Disconnected from the host.', true); session = null; }
     },
     onResync: () => { if (game) game.chatLine({ p: -1, text: 'Game state synced with host.' }); },
+    onPause: (on, name) => { if (game) game.onPause(on, name); },
+    onSpeed: (x) => { if (game) game.onSpeed(x); },
+    onPing: (msg) => { if (game) game.onPing(msg); },
+    onLobbyBack: () => {
+      if (game) { game.destroy(); game = null; }
+      show('lobby');
+      if (session) renderLobby(session.publicLobby ? session.mode === 'client' ? session.lobby : session.publicLobby() : session.lobby, session.me);
+      status('lobby-status', session && session.isHost ? 'Ready for another round. Change anything you like and start.' : 'Back in the lobby. Waiting for the host…');
+    },
   };
 }
 
 function renderLobby(lobby, me) {
+  // During a game this only keeps the list up to date. Don't leave the game screen.
+  if (session.world) return;
   show('lobby');
   const host = session.isHost;
   $('room-box').classList.toggle('hidden', session.mode === 'solo');
@@ -61,22 +73,37 @@ function renderLobby(lobby, me) {
   const tb = $('player-table').querySelector('tbody');
   tb.innerHTML = lobby.players.map((p, i) => {
     const mine = i === me;
-    const colorSel = mine
+    // The host sets up bots the same way you set up yourself.
+    const edit = mine || (host && p.bot);
+    const colorSel = edit
       ? `<select data-color>${PLAYER_COLORS.map((c) => `<option value="${c}" ${c === p.color ? 'selected' : ''} style="background:${c}">${c === p.color ? '■ ' : ''}${colorName(c)}</option>`).join('')}</select>`
       : `<span class="swatch" style="background:${p.color}"></span>${colorName(p.color)}`;
-    const natSel = mine
+    const natSel = edit
       ? `<select data-nation><option value="random" ${p.nation === 'random' ? 'selected' : ''}>🎲 Random</option>${NATION_KEYS.map((k) => `<option value="${k}" ${k === p.nation ? 'selected' : ''}>${NATIONS[k].name}</option>`).join('')}</select>`
       : nationLabel(p.nation);
-    const teamSel = mine
+    const teamSel = edit
       ? `<select data-team>${Array.from({ length: MAX_PLAYERS }, (_, t) => `<option value="${t}" ${t === p.team ? 'selected' : ''}>Team ${t + 1}</option>`).join('')}</select>`
       : `Team ${p.team + 1}`;
-    const kick = host && i !== 0 ? `<button class="small secondary" data-kick="${i}">Kick</button>` : '';
-    return `<tr><td><span class="swatch" style="background:${p.color}"></span>${esc(p.name)}${i === 0 ? ' 👑' : ''}${mine ? ' (you)' : ''}${p.online === false ? ' (offline)' : ''}</td><td><span class="nat">${flagImg(p.nation || 'random', 16)}${natSel}</span></td><td>${colorSel}</td><td>${teamSel}</td><td>${kick}</td></tr>`;
+    const kick = host && i !== 0 ? `<button class="small secondary" data-kick="${i}">${p.bot ? 'Remove' : 'Kick'}</button>` : '';
+    const lvl = p.bot && host
+      ? `<select data-level>${Object.entries(BOT_LEVELS).map(([k, v]) => `<option value="${k}" ${k === p.bot ? 'selected' : ''}>${v.name}</option>`).join('')}</select>`
+      : p.bot ? esc(BOT_LEVELS[p.bot]?.name || '') : '';
+    return `<tr data-slot="${i}"><td><span class="swatch" style="background:${p.color}"></span>${p.bot ? '🤖 ' : ''}${esc(p.name)}${i === 0 ? ' 👑' : ''}${mine ? ' (you)' : ''}${p.online === false ? ' (offline)' : ''} ${lvl}</td><td><span class="nat">${flagImg(p.nation || 'random', 16)}${natSel}</span></td><td>${colorSel}</td><td>${teamSel}</td><td>${kick}</td></tr>`;
   }).join('');
-  tb.querySelector('[data-color]')?.addEventListener('change', (e) => session.setMine({ color: e.target.value }));
-  tb.querySelector('[data-nation]')?.addEventListener('change', (e) => { localStorage.setItem('ron-nation', e.target.value); session.setMine({ nation: e.target.value }); });
+  // Each row's selects change that row's player: yourself, or (for the host) a bot.
+  const setRow = (e, v) => {
+    const slot = +e.target.closest('tr').dataset.slot;
+    if (slot === me) session.setMine(v); else session.setBot(slot, v);
+  };
+  tb.querySelectorAll('[data-color]').forEach((el) => el.addEventListener('change', (e) => setRow(e, { color: e.target.value })));
+  tb.querySelectorAll('[data-nation]').forEach((el) => el.addEventListener('change', (e) => {
+    if (+e.target.closest('tr').dataset.slot === me) localStorage.setItem('ron-nation', e.target.value);
+    setRow(e, { nation: e.target.value });
+  }));
   renderNationCard(lobby.players[me]?.nation);
-  tb.querySelector('[data-team]')?.addEventListener('change', (e) => session.setMine({ team: +e.target.value }));
+  tb.querySelectorAll('[data-team]').forEach((el) => el.addEventListener('change', (e) => setRow(e, { team: +e.target.value })));
+  tb.querySelectorAll('[data-level]').forEach((el) => el.addEventListener('change', (e) => setRow(e, { level: e.target.value })));
+  $('bot-row').classList.toggle('hidden', !host);
   tb.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', () => session.kick(+b.dataset.kick)));
   for (const sel of $('settings').querySelectorAll('select')) {
     const k = sel.dataset.set;
@@ -87,9 +114,12 @@ function renderLobby(lobby, me) {
   const n = lobby.players.length;
   if (host) {
     $('btn-start').disabled = false;
-    status('lobby-status', session.mode === 'solo'
-      ? 'Practice mode: just you, no enemies. Good for learning and testing.'
-      : n < 2 ? 'Send the room code or invite link to your friends. You can also start alone.' : `${n} players ready.`);
+    const humans = lobby.players.filter((p) => !p.bot).length;
+    const teams = new Set(lobby.players.map((p) => p.team)).size;
+    status('lobby-status', n < 2
+      ? (session.mode === 'solo' ? 'Sandbox: just you, no enemies. Add a bot if you want a fight.' : 'Send the room code or invite link to your friends, or add bots.')
+      : teams < 2 ? 'Everyone is on the same team, so nobody can win. Put a bot on another team for a co-op game.'
+        : `${humans} ${humans === 1 ? 'player' : 'players'}${n > humans ? ` and ${n - humans} ${n - humans === 1 ? 'bot' : 'bots'}` : ''} ready.`);
   } else status('lobby-status', 'Waiting for the host to start…');
 }
 
@@ -163,6 +193,7 @@ $('join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('bt
 
 // ---------- lobby buttons ----------
 $('btn-start').addEventListener('click', () => session && session.startGame());
+$('btn-add-bot').addEventListener('click', () => session && session.addBot($('bot-level').value));
 $('btn-leave').addEventListener('click', quitToMenu);
 $('btn-copy').addEventListener('click', async () => {
   const url = `${location.origin}${location.pathname}?join=${session.code}`;
@@ -172,7 +203,7 @@ $('btn-copy').addEventListener('click', async () => {
 for (const sel of $('settings').querySelectorAll('select')) {
   sel.addEventListener('change', () => {
     const k = sel.dataset.set;
-    const v = ['startAge', 'doomsday'].includes(k) ? +sel.value : k === 'silly' ? sel.value === 'true' : sel.value;
+    const v = ['startAge', 'doomsday', 'speed'].includes(k) ? +sel.value : k === 'silly' || k === 'wonders' ? sel.value === 'true' : sel.value;
     session.setSettings({ [k]: v });
   });
 }
@@ -218,6 +249,9 @@ $('tagline').textContent = TAGLINES[Math.floor(Math.random() * TAGLINES.length)]
 window.addEventListener('beforeunload', (e) => {
   if (game && session && session.mode !== 'solo') { e.preventDefault(); e.returnValue = ''; }
 });
+
+// Closing the tab: tell the others straight away instead of leaving them to work it out.
+window.addEventListener('pagehide', () => { if (session) session.leave(); });
 
 // Debug handle for the browser console.
 window.ron = { get session() { return session; }, get game() { return game; } };

@@ -91,11 +91,12 @@ export function genMap(seed, nPlayers, sizeTiles) {
     // forests behind the city
     disc(sx - dx * 8, sy + dy * 1, 3, (x, y) => { tiles[idx(x, y)] = T.FOREST; });
     disc(sx + dx * 2, sy - dy * 8, 2.5, (x, y) => { tiles[idx(x, y)] = T.FOREST; });
-    // two metal deposits close by
+    // three metal deposits close by
     dep[idx(sx + dx * 6, sy - dy * 3)] = DEP.METAL;
     dep[idx(sx - dx * 3, sy + dy * 6)] = DEP.METAL;
-    // one oil deposit a bit further out, towards the centre
-    const ox = sx + dx * 12, oy = sy + dy * 5;
+    dep[idx(sx + dx * 5, sy + dy * 5)] = DEP.METAL;
+    // one oil deposit towards the centre, just inside the borders of the Industrial Age
+    const ox = sx + dx * 9, oy = sy + dy * 4;
     disc(ox, oy, 1.6, (x, y) => { tiles[idx(x, y)] = T.GRASS; });
     carve(sx, sy, ox, oy, 1);
     dep[idx(ox, oy)] = DEP.OIL;
@@ -139,7 +140,7 @@ export function genMap(seed, nPlayers, sizeTiles) {
     }
   };
   const scale = (w * h) / (128 * 128);
-  scatter(Math.round((3 + nPlayers * 2) * scale), DEP.METAL, 12);
+  scatter(Math.round((5 + nPlayers * 2) * scale), DEP.METAL, 12);
   scatter(Math.round((4 + nPlayers * 2) * scale), DEP.OIL, 13);
 
   return { w, h, tiles, dep, starts };
